@@ -12,19 +12,19 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
     let minY = Infinity;
     let maxY = -Infinity;
 
-    // Step 1: Calculate global elevation boundaries
+    // Calculate global elevation boundaries for accurate heatmap
     data.forEach((point) => {
       const y = parseFloat(point.Z) || 0; 
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     });
 
-    // Step 2: Filter data based on the cross-section slicer value
+    // Filter data based on the cross-section slicer value
     const filteredData = data.filter(point => (parseFloat(point.X) || 0) <= sliceX);
     
     if (filteredData.length === 0) return null;
 
-    // Step 3: Initialize BufferGeometry for high-performance rendering
+    // Initialize BufferGeometry for high-performance rendering
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(filteredData.length * 3);
     const colors = new Float32Array(filteredData.length * 3);
@@ -39,7 +39,7 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
       positions[i * 3 + 1] = y;
       positions[i * 3 + 2] = z;
 
-      // Apply elevation-based heatmap coloring
+      // Apply elevation-based heatmap coloring (Blue to Red)
       const heightRange = maxY - minY === 0 ? 1 : maxY - minY;
       const normalizedHeight = (y - minY) / heightRange;
       const hue = 0.6 * (1 - normalizedHeight);
@@ -77,10 +77,11 @@ function App() {
   const [clickedPoints, setClickedPoints] = useState([]);
   const [distance, setDistance] = useState(null);
 
-  // Cross-Section Slicer State
-  const [sliceX, setSliceX] = useState(50);
+  // Cross-Section Slicer States
+  const [sliceX, setSliceX] = useState(50); // Updates the 3D model
+  const [sliderUIValue, setSliderUIValue] = useState(50); // Updates the UI smoothly
   
-  // NEW OPTIMIZATION STATE: Loading indicator for massive datasets
+  // Loading indicator state for massive datasets
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Handle CSV file upload using background Web Workers
@@ -88,18 +89,17 @@ function App() {
     const file = event.target.files[0];
     if (!file) return;
 
-    // Activate loading UI state before parsing begins
     setIsProcessing(true);
 
     Papa.parse(file, {
       header: true,
       dynamicTyping: true,
       skipEmptyLines: true,
-      worker: true, // CRITICAL OPTIMIZATION: Parses data in a separate background thread
+      worker: true, // Parses data in a separate background thread
       complete: (results) => {
         console.log("Massive CSV Parsed Successfully. Total points:", results.data.length);
         setPoints(results.data);
-        setIsProcessing(false); // Deactivate loading UI state
+        setIsProcessing(false);
       }
     });
   };
@@ -133,9 +133,9 @@ function App() {
         
         <input type="file" accept=".csv" onChange={handleFileUpload} style={{ color: 'white' }} />
         
-        {/* NEW OPTIMIZATION UI: Display loading text while Web Worker parses data */}
+        {/* Loading indicator for massive dataset parsing */}
         {isProcessing && (
-          <div style={{ color: '#ffeb3b', fontWeight: 'bold', animation: 'pulse 1.5s infinite' }}>
+          <div style={{ color: '#ffeb3b', fontWeight: 'bold' }}>
             Processing Massive Data... ⏳
           </div>
         )}
@@ -147,11 +147,15 @@ function App() {
           {autoRotate ? 'Stop Rotation' : 'Auto-Rotate'}
         </button>
 
+        {/* Slice Mode UI with UI/Model state separation to prevent render lag */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
           <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Slice Mode ✂️</label>
           <input 
             type="range" min="-50" max="50" step="1" 
-            value={sliceX} onChange={(e) => setSliceX(parseFloat(e.target.value))} 
+            value={sliderUIValue} 
+            onChange={(e) => setSliderUIValue(parseFloat(e.target.value))} 
+            onMouseUp={(e) => setSliceX(parseFloat(e.target.value))} 
+            onTouchEnd={(e) => setSliceX(parseFloat(e.target.value))} 
             style={{ cursor: 'pointer' }}
           />
         </div>
@@ -160,7 +164,8 @@ function App() {
           <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Point Size: {pointSize.toFixed(1)}</label>
           <input 
             type="range" min="0.1" max="2.0" step="0.1" 
-            value={pointSize} onChange={(e) => setPointSize(parseFloat(e.target.value))} 
+            value={pointSize} 
+            onChange={(e) => setPointSize(parseFloat(e.target.value))} 
             style={{ cursor: 'pointer' }}
           />
         </div>
