@@ -4,16 +4,13 @@ import { OrbitControls, Grid, Line, Sphere } from '@react-three/drei';
 import Papa from 'papaparse';
 import * as THREE from 'three';
 
-// Component responsible for rendering the 3D point cloud
-// NEW: Added onPointClick prop to handle user clicks for measurement
-function PointCloud({ data, pointSize, onPointClick }) {
+// COMPONENT 1: Point Cloud Renderer
+// NEW: Added sliceX prop to filter points based on the X-axis
+function PointCloud({ data, pointSize, onPointClick, sliceX }) {
   const geometry = useMemo(() => {
     if (!data || data.length === 0) return null;
 
-    const geo = new THREE.BufferGeometry();
-    const positions = new Float32Array(data.length * 3);
-    const colors = new Float32Array(data.length * 3);
-
+    // Step 1: Calculate global Min/Max elevation for consistent color scaling
     let minY = Infinity;
     let maxY = -Infinity;
 
@@ -23,9 +20,18 @@ function PointCloud({ data, pointSize, onPointClick }) {
       if (y > maxY) maxY = y;
     });
 
+    // Step 2: Filter data based on the Slicer (Cross-section view)
+    const filteredData = data.filter(point => (parseFloat(point.X) || 0) <= sliceX);
+    
+    if (filteredData.length === 0) return null;
+
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(filteredData.length * 3);
+    const colors = new Float32Array(filteredData.length * 3);
     const color = new THREE.Color();
 
-    data.forEach((point, i) => {
+    // Step 3: Map spatial coordinates and apply colors to the filtered points
+    filteredData.forEach((point, i) => {
       const x = parseFloat(point.X) || 0;
       const y = parseFloat(point.Z) || 0; 
       const z = parseFloat(point.Y) || 0;
@@ -49,28 +55,30 @@ function PointCloud({ data, pointSize, onPointClick }) {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     return geo;
-  }, [data]);
+  }, [data, sliceX]); // Re-calculate when data or sliceX changes
 
   if (!geometry) return null;
 
   return (
-    // NEW: Attach the click event directly to the points mesh
     <points geometry={geometry} onClick={onPointClick}>
       <pointsMaterial size={pointSize} vertexColors={true} sizeAttenuation={true} />
     </points>
   );
 }
 
-// Main application container
+// COMPONENT 2: Main UI Application
 function App() {
   const [points, setPoints] = useState([]);
   const [autoRotate, setAutoRotate] = useState(false);
   const [pointSize, setPointSize] = useState(0.3);
   
-  // NEW STATES: For Measurement Tool
+  // States for Measurement Tool
   const [measureMode, setMeasureMode] = useState(false);
   const [clickedPoints, setClickedPoints] = useState([]);
   const [distance, setDistance] = useState(null);
+
+  // NEW STATE: For Slicing/Clipping Tool (Default 50 means fully visible)
+  const [sliceX, setSliceX] = useState(50);
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -87,22 +95,16 @@ function App() {
     });
   };
 
-  // Handle click events on the 3D point cloud
   const handlePointClick = (event) => {
     if (!measureMode) return;
-    
-    // Prevent click from triggering other events in the background
     event.stopPropagation();
-
-    // Extract the exact 3D intersection coordinate
+    
     const newPoint = event.point;
 
     if (clickedPoints.length === 0 || clickedPoints.length === 2) {
-      // Start a fresh measurement if 0 or 2 points are already selected
       setClickedPoints([newPoint]);
       setDistance(null);
     } else if (clickedPoints.length === 1) {
-      // Calculate distance between the first point and the newly clicked point
       const p1 = clickedPoints[0];
       const p2 = newPoint;
       const dist = p1.distanceTo(p2);
@@ -128,6 +130,20 @@ function App() {
           {autoRotate ? 'Stop Rotation' : 'Auto-Rotate'}
         </button>
 
+        {/* NEW UI: Slicing Slider for Cross-Section View */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
+          <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Slice Mode ✂️</label>
+          <input 
+            type="range" 
+            min="-50" 
+            max="50" 
+            step="1" 
+            value={sliceX} 
+            onChange={(e) => setSliceX(parseFloat(e.target.value))} 
+            style={{ cursor: 'pointer' }}
+          />
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
           <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Point Size: {pointSize.toFixed(1)}</label>
           <input 
@@ -141,7 +157,6 @@ function App() {
           />
         </div>
 
-        {/* NEW UI: Measurement Mode Toggle and Distance Display */}
         <button 
           onClick={() => {
             setMeasureMode(!measureMode);
@@ -172,9 +187,8 @@ function App() {
           <ambientLight intensity={0.8} />
           <gridHelper args={[50, 50, '#444', '#222']} />
           
-          <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} />
+          <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} sliceX={sliceX} />
           
-          {/* Render markers and connecting line for measurement */}
           {clickedPoints.map((pos, idx) => (
             <Sphere key={idx} args={[0.5, 16, 16]} position={pos}>
               <meshBasicMaterial color="red" />
