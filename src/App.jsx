@@ -4,8 +4,7 @@ import { OrbitControls, Grid } from '@react-three/drei';
 import Papa from 'papaparse';
 import * as THREE from 'three';
 
-// COMPONENT 1: Point Cloud with Elevation-Based Color Mapping
-// NAYA: pointSize ko props mein receive kiya
+// Component responsible for rendering the 3D point cloud with elevation-based colors
 function PointCloud({ data, pointSize }) {
   const geometry = useMemo(() => {
     if (!data || data.length === 0) return null;
@@ -17,29 +16,35 @@ function PointCloud({ data, pointSize }) {
     let minY = Infinity;
     let maxY = -Infinity;
 
+    // Calculate the minimum and maximum elevation (Y-axis) to determine the color gradient range
     data.forEach((point) => {
-      const y = parseFloat(point.Z) || 0;
+      const y = parseFloat(point.Z) || 0; // Using CSV 'Z' as the vertical 'Y' axis in Three.js
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     });
 
     const color = new THREE.Color();
 
+    // Process each coordinate and map depth to a specific color
     data.forEach((point, i) => {
       const x = parseFloat(point.X) || 0;
       const y = parseFloat(point.Z) || 0; 
       const z = parseFloat(point.Y) || 0;
 
+      // Set spatial coordinates
       positions[i * 3] = x;
       positions[i * 3 + 1] = y;
       positions[i * 3 + 2] = z;
 
+      // Map colors dynamically: Lower elevation appears blue, higher elevation appears red
       const heightRange = maxY - minY === 0 ? 1 : maxY - minY;
       const normalizedHeight = (y - minY) / heightRange;
       
+      // HSL Hue calculation (0.6 is blue, 0.0 is red)
       const hue = 0.6 * (1 - normalizedHeight);
       color.setHSL(hue, 1.0, 0.5);
 
+      // Apply calculated color to the current point
       colors[i * 3] = color.r;
       colors[i * 3 + 1] = color.g;
       colors[i * 3 + 2] = color.b;
@@ -55,18 +60,18 @@ function PointCloud({ data, pointSize }) {
 
   return (
     <points geometry={geometry}>
-      {/* NAYA: size attribute ko dynamic banaya pointSize state se */}
       <pointsMaterial size={pointSize} vertexColors={true} sizeAttenuation={true} />
     </points>
   );
 }
 
-// COMPONENT 2: Main Application UI
+// Main application container managing UI state and the 3D canvas
 function App() {
   const [points, setPoints] = useState([]);
   const [autoRotate, setAutoRotate] = useState(false);
-  const [pointSize, setPointSize] = useState(0.3); // NAYA FEATURE: Point Size state
+  const [pointSize, setPointSize] = useState(0.3);
 
+  // Parse uploaded CSV file and extract coordinate data
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -76,7 +81,7 @@ function App() {
       dynamicTyping: true,
       skipEmptyLines: true,
       complete: (results) => {
-        console.log("CSV Parsed Successfully. Total points:", results.data.length);
+        console.log("CSV Parsed Successfully. Total points loaded:", results.data.length);
         setPoints(results.data);
       }
     });
@@ -85,9 +90,10 @@ function App() {
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
       
-      {/* Top Navigation Bar */}
+      {/* Top Control Panel */}
       <div style={{ padding: '15px', backgroundColor: '#2d2d2d', color: 'white', borderBottom: '2px solid #444', display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
         <h2 style={{ margin: '0' }}>3D Mine Survey Visualizer</h2>
+        
         <input type="file" accept=".csv" onChange={handleFileUpload} style={{ color: 'white' }} />
         
         <button 
@@ -97,7 +103,6 @@ function App() {
           {autoRotate ? 'Stop Rotation' : 'Auto-Rotate'}
         </button>
 
-        {/* NAYA FEATURE: Point Size Slider */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
           <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Point Size: {pointSize.toFixed(1)}</label>
           <input 
@@ -118,12 +123,11 @@ function App() {
         )}
       </div>
 
-      {/* 3D Viewer Section */}
+      {/* 3D Scene Viewer */}
       <div style={{ flex: 1 }}>
         <Canvas camera={{ position: [0, 5, 12] }}>
           <ambientLight intensity={0.8} />
           <gridHelper args={[50, 50, '#444', '#222']} />
-          {/* NAYA: pointSize prop pass kiya */}
           <PointCloud data={points} pointSize={pointSize} />
           <OrbitControls autoRotate={autoRotate} />
         </Canvas>
