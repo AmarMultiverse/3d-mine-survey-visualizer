@@ -3,6 +3,9 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Line, Sphere } from '@react-three/drei';
 import Papa from 'papaparse';
 import * as THREE from 'three';
+// NEW IMPORTS: For LiDAR (.las) support
+import { parse } from '@loaders.gl/core';
+import { LASLoader } from '@loaders.gl/las';
 
 // COMPONENT 1: Optimized Point Cloud Renderer
 function PointCloud({ data, pointSize, onPointClick, sliceX }) {
@@ -12,19 +15,16 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
     let minY = Infinity;
     let maxY = -Infinity;
 
-    // Calculate global elevation boundaries for accurate heatmap
     data.forEach((point) => {
       const y = parseFloat(point.Z) || 0; 
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     });
 
-    // Filter data based on the cross-section slicer value
     const filteredData = data.filter(point => (parseFloat(point.X) || 0) <= sliceX);
     
     if (filteredData.length === 0) return null;
 
-    // Initialize BufferGeometry for high-performance rendering
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(filteredData.length * 3);
     const colors = new Float32Array(filteredData.length * 3);
@@ -39,7 +39,6 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
       positions[i * 3 + 1] = y;
       positions[i * 3 + 2] = z;
 
-      // Apply elevation-based heatmap coloring (Blue to Red)
       const heightRange = maxY - minY === 0 ? 1 : maxY - minY;
       const normalizedHeight = (y - minY) / heightRange;
       const hue = 0.6 * (1 - normalizedHeight);
@@ -66,46 +65,76 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
   );
 }
 
-// COMPONENT 2: Main Application UI with Multithreading
+// COMPONENT 2: Main Application UI with LiDAR and CSV Support
 function App() {
   const [points, setPoints] = useState([]);
   const [autoRotate, setAutoRotate] = useState(false);
   const [pointSize, setPointSize] = useState(0.3);
   
-  // Measurement & Slope Tool States
   const [measureMode, setMeasureMode] = useState(false);
   const [clickedPoints, setClickedPoints] = useState([]);
   const [distance, setDistance] = useState(null);
-  const [slopeAngle, setSlopeAngle] = useState(null); // NEW STATE: To store the calculated slope angle in degrees
+  const [slopeAngle, setSlopeAngle] = useState(null);
 
-  // Cross-Section Slicer States
   const [sliceX, setSliceX] = useState(50);
   const [sliderUIValue, setSliderUIValue] = useState(50);
   
-  // Loading indicator state
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Handle CSV file upload using background Web Workers
-  const handleFileUpload = (event) => {
+  // UPDATED FEATURE: Handle both CSV and LiDAR (.las) files dynamically
+  const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
     setIsProcessing(true);
+    const fileExtension = file.name.split('.').pop().toLowerCase();
 
-    Papa.parse(file, {
-      header: true,
-      dynamicTyping: true,
-      skipEmptyLines: true,
-      worker: true, // Parses data in a separate background thread
-      complete: (results) => {
-        console.log("Massive CSV Parsed Successfully. Total points:", results.data.length);
-        setPoints(results.data);
+    // Check if the uploaded file is a CSV
+    if (fileExtension === 'csv') {
+      Papa.parse(file, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        worker: true,
+        complete: (results) => {
+          console.log("CSV Parsed Successfully. Total points:", results.data.length);
+          setPoints(results.data);
+          setIsProcessing(false);
+        }
+      });
+    } 
+    // Check if the uploaded file is a LiDAR (.las) file
+    else if (fileExtension === 'las') {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const lasData = await parse(arrayBuffer, LASLoader);
+        
+        const positions = lasData.attributes.POSITION.value;
+        const formattedPoints = [];
+        
+        // Convert flat ArrayBuffer to structured object array to maintain compatibility
+        for (let i = 0; i < positions.length; i += 3) {
+          formattedPoints.push({
+            X: positions[i],
+            Y: positions[i + 1],
+            Z: positions[i + 2]
+          });
+        }
+        
+        console.log("LiDAR (.las) Parsed Successfully. Total points:", formattedPoints.length);
+        setPoints(formattedPoints);
+      } catch (error) {
+        console.error("Error parsing LiDAR file:", error);
+        alert("Failed to parse the .las file. Ensure it is a valid LiDAR dataset.");
+      } finally {
         setIsProcessing(false);
       }
-    });
+    } else {
+      alert("Unsupported file type! Please upload a .csv or .las file.");
+      setIsProcessing(false);
+    }
   };
 
-  // Handle 3D raycasting for distance and slope measurement
   const handlePointClick = (event) => {
     if (!measureMode) return;
     event.stopPropagation();
@@ -115,37 +144,32 @@ function App() {
     if (clickedPoints.length === 0 || clickedPoints.length === 2) {
       setClickedPoints([newPoint]);
       setDistance(null);
-      setSlopeAngle(null); // Reset slope on new measurement
+      setSlopeAngle(null);
     } else if (clickedPoints.length === 1) {
       const p1 = clickedPoints[0];
       const p2 = newPoint;
       
-      // Calculate overall 3D distance
       const dist = p1.distanceTo(p2);
       
-      // NEW FEATURE: Calculate Slope Angle (Trigonometry)
-      // 1. Vertical difference (Y-axis in our Three.js mapping)
       const verticalDiff = Math.abs(p1.y - p2.y);
-      // 2. Horizontal distance (Hypotenuse of X and Z axes)
       const horizontalDist = Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.z - p2.z, 2));
-      // 3. Calculate angle in radians and convert to degrees
       const angleInRadians = Math.atan2(verticalDiff, horizontalDist);
       const angleInDegrees = angleInRadians * (180 / Math.PI);
       
       setClickedPoints([p1, p2]);
       setDistance(dist);
-      setSlopeAngle(angleInDegrees); // Save the calculated angle
+      setSlopeAngle(angleInDegrees);
     }
   };
 
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
       
-      {/* Top Navigation Panel */}
       <div style={{ padding: '15px', backgroundColor: '#2d2d2d', color: 'white', borderBottom: '2px solid #444', display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
         <h2 style={{ margin: '0' }}>3D Mine Survey Visualizer</h2>
         
-        <input type="file" accept=".csv" onChange={handleFileUpload} style={{ color: 'white' }} />
+        {/* UPDATED: accept attribute now allows both .csv and .las formats */}
+        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: 'white' }} />
         
         {isProcessing && (
           <div style={{ color: '#ffeb3b', fontWeight: 'bold' }}>
@@ -187,14 +211,13 @@ function App() {
             setMeasureMode(!measureMode);
             setClickedPoints([]);
             setDistance(null);
-            setSlopeAngle(null); // Reset slope when toggling tool
+            setSlopeAngle(null);
           }}
           style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
         >
           {measureMode ? 'Close Measurement' : 'Measure & Slope 📏'}
         </button>
 
-        {/* UPDATED UI: Display both Distance and Slope Angle */}
         {distance !== null && slopeAngle !== null && (
           <div style={{ backgroundColor: '#ff9800', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black', display: 'flex', gap: '15px' }}>
             <span>Distance: {distance.toFixed(2)} m</span>
@@ -209,7 +232,6 @@ function App() {
         )}
       </div>
 
-      {/* 3D Scene Viewer */}
       <div style={{ flex: 1 }}>
         <Canvas camera={{ position: [0, 5, 12] }}>
           <ambientLight intensity={0.8} />
