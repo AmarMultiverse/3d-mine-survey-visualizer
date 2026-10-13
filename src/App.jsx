@@ -72,16 +72,17 @@ function App() {
   const [autoRotate, setAutoRotate] = useState(false);
   const [pointSize, setPointSize] = useState(0.3);
   
-  // Measurement Tool States
+  // Measurement & Slope Tool States
   const [measureMode, setMeasureMode] = useState(false);
   const [clickedPoints, setClickedPoints] = useState([]);
   const [distance, setDistance] = useState(null);
+  const [slopeAngle, setSlopeAngle] = useState(null); // NEW STATE: To store the calculated slope angle in degrees
 
   // Cross-Section Slicer States
-  const [sliceX, setSliceX] = useState(50); // Updates the 3D model
-  const [sliderUIValue, setSliderUIValue] = useState(50); // Updates the UI smoothly
+  const [sliceX, setSliceX] = useState(50);
+  const [sliderUIValue, setSliderUIValue] = useState(50);
   
-  // Loading indicator state for massive datasets
+  // Loading indicator state
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Handle CSV file upload using background Web Workers
@@ -104,7 +105,7 @@ function App() {
     });
   };
 
-  // Handle 3D raycasting for distance measurement
+  // Handle 3D raycasting for distance and slope measurement
   const handlePointClick = (event) => {
     if (!measureMode) return;
     event.stopPropagation();
@@ -114,13 +115,26 @@ function App() {
     if (clickedPoints.length === 0 || clickedPoints.length === 2) {
       setClickedPoints([newPoint]);
       setDistance(null);
+      setSlopeAngle(null); // Reset slope on new measurement
     } else if (clickedPoints.length === 1) {
       const p1 = clickedPoints[0];
       const p2 = newPoint;
+      
+      // Calculate overall 3D distance
       const dist = p1.distanceTo(p2);
+      
+      // NEW FEATURE: Calculate Slope Angle (Trigonometry)
+      // 1. Vertical difference (Y-axis in our Three.js mapping)
+      const verticalDiff = Math.abs(p1.y - p2.y);
+      // 2. Horizontal distance (Hypotenuse of X and Z axes)
+      const horizontalDist = Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.z - p2.z, 2));
+      // 3. Calculate angle in radians and convert to degrees
+      const angleInRadians = Math.atan2(verticalDiff, horizontalDist);
+      const angleInDegrees = angleInRadians * (180 / Math.PI);
       
       setClickedPoints([p1, p2]);
       setDistance(dist);
+      setSlopeAngle(angleInDegrees); // Save the calculated angle
     }
   };
 
@@ -133,7 +147,6 @@ function App() {
         
         <input type="file" accept=".csv" onChange={handleFileUpload} style={{ color: 'white' }} />
         
-        {/* Loading indicator for massive dataset parsing */}
         {isProcessing && (
           <div style={{ color: '#ffeb3b', fontWeight: 'bold' }}>
             Processing Massive Data... ⏳
@@ -147,7 +160,6 @@ function App() {
           {autoRotate ? 'Stop Rotation' : 'Auto-Rotate'}
         </button>
 
-        {/* Slice Mode UI with UI/Model state separation to prevent render lag */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
           <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Slice Mode ✂️</label>
           <input 
@@ -175,15 +187,18 @@ function App() {
             setMeasureMode(!measureMode);
             setClickedPoints([]);
             setDistance(null);
+            setSlopeAngle(null); // Reset slope when toggling tool
           }}
           style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
         >
-          {measureMode ? 'Close Measurement' : 'Measure Tool 📏'}
+          {measureMode ? 'Close Measurement' : 'Measure & Slope 📏'}
         </button>
 
-        {distance !== null && (
-          <div style={{ backgroundColor: '#ff9800', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black' }}>
-            Distance: {distance.toFixed(2)} m
+        {/* UPDATED UI: Display both Distance and Slope Angle */}
+        {distance !== null && slopeAngle !== null && (
+          <div style={{ backgroundColor: '#ff9800', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black', display: 'flex', gap: '15px' }}>
+            <span>Distance: {distance.toFixed(2)} m</span>
+            <span style={{ borderLeft: '2px solid rgba(0,0,0,0.3)', paddingLeft: '15px' }}>Slope: {slopeAngle.toFixed(1)}°</span>
           </div>
         )}
 
