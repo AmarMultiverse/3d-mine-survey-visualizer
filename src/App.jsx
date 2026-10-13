@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { OrbitControls, Grid, Line, Sphere } from '@react-three/drei';
 import Papa from 'papaparse';
 import * as THREE from 'three';
 
-// Component responsible for rendering the 3D point cloud with elevation-based colors
-function PointCloud({ data, pointSize }) {
+// Component responsible for rendering the 3D point cloud
+// NEW: Added onPointClick prop to handle user clicks for measurement
+function PointCloud({ data, pointSize, onPointClick }) {
   const geometry = useMemo(() => {
     if (!data || data.length === 0) return null;
 
@@ -16,35 +17,29 @@ function PointCloud({ data, pointSize }) {
     let minY = Infinity;
     let maxY = -Infinity;
 
-    // Calculate the minimum and maximum elevation (Y-axis) to determine the color gradient range
     data.forEach((point) => {
-      const y = parseFloat(point.Z) || 0; // Using CSV 'Z' as the vertical 'Y' axis in Three.js
+      const y = parseFloat(point.Z) || 0; 
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     });
 
     const color = new THREE.Color();
 
-    // Process each coordinate and map depth to a specific color
     data.forEach((point, i) => {
       const x = parseFloat(point.X) || 0;
       const y = parseFloat(point.Z) || 0; 
       const z = parseFloat(point.Y) || 0;
 
-      // Set spatial coordinates
       positions[i * 3] = x;
       positions[i * 3 + 1] = y;
       positions[i * 3 + 2] = z;
 
-      // Map colors dynamically: Lower elevation appears blue, higher elevation appears red
       const heightRange = maxY - minY === 0 ? 1 : maxY - minY;
       const normalizedHeight = (y - minY) / heightRange;
       
-      // HSL Hue calculation (0.6 is blue, 0.0 is red)
       const hue = 0.6 * (1 - normalizedHeight);
       color.setHSL(hue, 1.0, 0.5);
 
-      // Apply calculated color to the current point
       colors[i * 3] = color.r;
       colors[i * 3 + 1] = color.g;
       colors[i * 3 + 2] = color.b;
@@ -59,19 +54,24 @@ function PointCloud({ data, pointSize }) {
   if (!geometry) return null;
 
   return (
-    <points geometry={geometry}>
+    // NEW: Attach the click event directly to the points mesh
+    <points geometry={geometry} onClick={onPointClick}>
       <pointsMaterial size={pointSize} vertexColors={true} sizeAttenuation={true} />
     </points>
   );
 }
 
-// Main application container managing UI state and the 3D canvas
+// Main application container
 function App() {
   const [points, setPoints] = useState([]);
   const [autoRotate, setAutoRotate] = useState(false);
   const [pointSize, setPointSize] = useState(0.3);
+  
+  // NEW STATES: For Measurement Tool
+  const [measureMode, setMeasureMode] = useState(false);
+  const [clickedPoints, setClickedPoints] = useState([]);
+  const [distance, setDistance] = useState(null);
 
-  // Parse uploaded CSV file and extract coordinate data
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -81,16 +81,41 @@ function App() {
       dynamicTyping: true,
       skipEmptyLines: true,
       complete: (results) => {
-        console.log("CSV Parsed Successfully. Total points loaded:", results.data.length);
+        console.log("CSV Parsed Successfully. Total points:", results.data.length);
         setPoints(results.data);
       }
     });
   };
 
+  // Handle click events on the 3D point cloud
+  const handlePointClick = (event) => {
+    if (!measureMode) return;
+    
+    // Prevent click from triggering other events in the background
+    event.stopPropagation();
+
+    // Extract the exact 3D intersection coordinate
+    const newPoint = event.point;
+
+    if (clickedPoints.length === 0 || clickedPoints.length === 2) {
+      // Start a fresh measurement if 0 or 2 points are already selected
+      setClickedPoints([newPoint]);
+      setDistance(null);
+    } else if (clickedPoints.length === 1) {
+      // Calculate distance between the first point and the newly clicked point
+      const p1 = clickedPoints[0];
+      const p2 = newPoint;
+      const dist = p1.distanceTo(p2);
+      
+      setClickedPoints([p1, p2]);
+      setDistance(dist);
+    }
+  };
+
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
       
-      {/* Top Control Panel */}
+      {/* Top Navigation Panel */}
       <div style={{ padding: '15px', backgroundColor: '#2d2d2d', color: 'white', borderBottom: '2px solid #444', display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
         <h2 style={{ margin: '0' }}>3D Mine Survey Visualizer</h2>
         
@@ -116,9 +141,27 @@ function App() {
           />
         </div>
 
+        {/* NEW UI: Measurement Mode Toggle and Distance Display */}
+        <button 
+          onClick={() => {
+            setMeasureMode(!measureMode);
+            setClickedPoints([]);
+            setDistance(null);
+          }}
+          style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
+        >
+          {measureMode ? 'Close Measurement' : 'Measure Tool 📏'}
+        </button>
+
+        {distance !== null && (
+          <div style={{ backgroundColor: '#ff9800', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black' }}>
+            Distance: {distance.toFixed(2)} meters
+          </div>
+        )}
+
         {points.length > 0 && (
           <div style={{ backgroundColor: '#4caf50', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', marginLeft: 'auto' }}>
-            Total Points Rendered: {points.length.toLocaleString()}
+            Total Points: {points.length.toLocaleString()}
           </div>
         )}
       </div>
@@ -128,7 +171,24 @@ function App() {
         <Canvas camera={{ position: [0, 5, 12] }}>
           <ambientLight intensity={0.8} />
           <gridHelper args={[50, 50, '#444', '#222']} />
-          <PointCloud data={points} pointSize={pointSize} />
+          
+          <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} />
+          
+          {/* Render markers and connecting line for measurement */}
+          {clickedPoints.map((pos, idx) => (
+            <Sphere key={idx} args={[0.5, 16, 16]} position={pos}>
+              <meshBasicMaterial color="red" />
+            </Sphere>
+          ))}
+
+          {clickedPoints.length === 2 && (
+            <Line 
+              points={[clickedPoints[0], clickedPoints[1]]} 
+              color="white" 
+              lineWidth={3}
+            />
+          )}
+
           <OrbitControls autoRotate={autoRotate} />
         </Canvas>
       </div>
