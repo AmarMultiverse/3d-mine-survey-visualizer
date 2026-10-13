@@ -1,45 +1,42 @@
-import math
 import csv
+import math
+import random
 
-def generate_open_pit_mine_data(filename, num_benches=10, points_per_bench=200):
-    """
-    Ek synthetic (fake) Open-Cast Mine ka 3D Point-Cloud data generate karta hai.
-    """
+def generate_massive_open_pit(filename, num_benches=50, points_per_bench=20000):
     data = []
-    
-    # Har bench (step) ki height (depth mein) aur radius
-    bench_height = 5  
-    base_radius = 50  # Surface level par radius
-    
+    bench_height = 2
+    base_radius = 200 # Bada katora (Large pit)
+
+    print(f"Generating {num_benches * points_per_bench} points... Please wait.")
+
     for bench_index in range(num_benches):
-        # Jaise-jaise gehrai mein jayenge, bench ka radius kam hota jayega (katora shape)
-        current_radius = base_radius - (bench_index * 4) 
-        
-        # Mine ka Z coordinate yahan depth represent karta hai
+        # Jaise gehrai badhegi, radius kam hoga
+        current_radius = base_radius - (bench_index * 3)
+        if current_radius < 10: 
+            current_radius = 10
+            
         current_z_elevation = -(bench_index * bench_height)
-        
-        # Har bench par ek circle mein points banayenge
+
         for point_index in range(points_per_bench):
             angle = (2 * math.pi * point_index) / points_per_bench
             
-            # Thoda random noise add karenge taaki ekdum perfect circle na lage, thoda natural natural dikhe
-            import random
-            noise = random.uniform(-0.5, 0.5)
+            # Thoda noise add kar rahe hain taaki ekdum artificial na lage
+            noise = random.uniform(-1.5, 1.5)
             
             x = (current_radius + noise) * math.cos(angle)
             y = (current_radius + noise) * math.sin(angle)
             
-            # X, Y (surface coordinates), aur Z (elevation/depth)
-            data.append([x, y, current_z_elevation])
+            # Round off kar rahe hain taaki file size limit mein rahe
+            data.append([round(x, 2), round(y, 2), current_z_elevation])
 
-    # Ab is data ko CSV file mein save karenge
+    print("Writing 1 Million points to CSV... This might take a few seconds.")
     with open(filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(['X', 'Y', 'Z']) # Header
+        writer.writerow(['X', 'Y', 'Z'])
         writer.writerows(data)
 
-    print(f"Data generated successfully! {len(data)} points saved to {filename}")
+    print(f"Success! {len(data)} points saved to {filename}")
 
-# Script chalne par function call hoga
 if __name__ == "__main__":
-    generate_open_pit_mine_data('massive_mine.csv', num_benches=15, points_per_bench=400)
+    # 50 benches * 20,000 points per bench = 1,000,000 Points (10 Lakh)
+    generate_massive_open_pit('massive_mine_1Million.csv', num_benches=50, points_per_bench=20000)
