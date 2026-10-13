@@ -28,7 +28,7 @@ function PointCloud({ data }) {
     // Process coordinates and map colors based on depth
     data.forEach((point, i) => {
       const x = parseFloat(point.X) || 0;
-      const y = parseFloat(point.Z) || 0; // Using Z as elevation
+      const y = parseFloat(point.Z) || 0; 
       const z = parseFloat(point.Y) || 0;
 
       positions[i * 3] = x;
@@ -39,7 +39,6 @@ function PointCloud({ data }) {
       const heightRange = maxY - minY === 0 ? 1 : maxY - minY;
       const normalizedHeight = (y - minY) / heightRange;
       
-      // 0.6 is blue, 0.0 is red in HSL hue
       const hue = 0.6 * (1 - normalizedHeight);
       color.setHSL(hue, 1.0, 0.5);
 
@@ -66,6 +65,7 @@ function PointCloud({ data }) {
 // COMPONENT 2: Main Application UI
 function App() {
   const [points, setPoints] = useState([]);
+  const [autoRotate, setAutoRotate] = useState(false); // NEW FEATURE: Rotation state
 
   // Handle CSV file upload and parsing
   const handleFileUpload = (event) => {
@@ -91,6 +91,14 @@ function App() {
         <h2 style={{ margin: '0' }}>3D Mine Survey Visualizer</h2>
         <input type="file" accept=".csv" onChange={handleFileUpload} style={{ color: 'white' }} />
         
+        {/* NEW FEATURE: Auto-Rotate Toggle Button */}
+        <button 
+          onClick={() => setAutoRotate(!autoRotate)}
+          style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
+        >
+          {autoRotate ? 'Stop Rotation' : 'Auto-Rotate'}
+        </button>
+
         {/* Display total points badge if data exists */}
         {points.length > 0 && (
           <div style={{ backgroundColor: '#4caf50', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px' }}>
@@ -105,7 +113,8 @@ function App() {
           <ambientLight intensity={0.8} />
           <gridHelper args={[50, 50, '#444', '#222']} />
           <PointCloud data={points} />
-          <OrbitControls />
+          {/* UPDATED: Passing the autoRotate state to OrbitControls */}
+          <OrbitControls autoRotate={autoRotate} />
         </Canvas>
       </div>
     </div>
