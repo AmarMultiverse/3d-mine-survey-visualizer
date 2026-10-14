@@ -107,6 +107,9 @@ function App() {
   const [autoRotate, setAutoRotate] = useState(false);
   const [pointSize, setPointSize] = useState(0.3);
   const [showPlanes, setShowPlanes] = useState(true);
+  
+  // Responsive UI Collapse State
+  const [isToolbarOpen, setIsToolbarOpen] = useState(true);
 
   // Material Selection State for Tonnage & Fleet
   const [materialType, setMaterialType] = useState('coal');
@@ -152,8 +155,14 @@ function App() {
 
   const activeTheme = themeMode === 'system' ? (isSystemDark ? 'dark' : 'light') : themeMode;
   const themeColors = activeTheme === 'dark' 
-    ? { bg: '#1e1e1e', nav: '#2d2d2d', text: 'white', card: '#3b3b3b', gridMain: '#444', gridSub: '#222' }
-    : { bg: '#f0f2f5', nav: '#ffffff', text: '#333333', card: '#e4e6eb', gridMain: '#cccccc', gridSub: '#dddddd' };
+    ? { 
+        bg: '#18181b', nav: '#27272a', text: '#f4f4f5', card: '#3f3f46', 
+        gridMain: '#444', gridSub: '#222', hudBg: 'rgba(24, 24, 27, 0.88)', hudBorder: 'rgba(255,255,255,0.15)' 
+      }
+    : { 
+        bg: '#f0f2f5', nav: '#ffffff', text: '#18181b', card: '#e4e6eb', 
+        gridMain: '#cccccc', gridSub: '#dddddd', hudBg: 'rgba(255, 255, 255, 0.90)', hudBorder: 'rgba(0,0,0,0.15)' 
+      };
 
   // AUTO-CALIBRATE SLIDERS TO EXACT MINE BOUNDARIES
   const calibrateMineBounds = (dataset) => {
@@ -405,169 +414,163 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
   const safetyBadge = getSlopeSafetyStatus(slopeAngle);
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: themeColors.bg, transition: 'background-color 0.3s' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: themeColors.bg, overflow: 'hidden', fontFamily: 'system-ui, sans-serif' }}>
       
-      {/* Top Navigation & Engineering Controls */}
-      <div style={{ padding: '10px 15px', backgroundColor: themeColors.nav, color: themeColors.text, borderBottom: `2px solid ${themeColors.card}`, display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', transition: 'all 0.3s' }}>
-        <h2 style={{ margin: '0', fontSize: '1.1rem' }}>3D Mine Visualizer</h2>
+      {/* RESPONSIVE TOP NAVIGATION BAR (flexShrink: 0 prevents layout squishing) */}
+      <div style={{ flexShrink: 0, backgroundColor: themeColors.nav, color: themeColors.text, borderBottom: `1px solid ${themeColors.card}`, padding: '8px 14px', zIndex: 20, boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>
         
-        <select value={themeMode} onChange={(e) => setThemeMode(e.target.value)} style={{ padding: '6px', borderRadius: '4px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
-          <option value="dark">🌙</option>
-          <option value="light">☀️</option>
-          <option value="system">💻</option>
-        </select>
+        {/* Always-Visible Primary Header Row */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <h2 style={{ margin: '0', fontSize: '1.1rem', fontWeight: 800, letterSpacing: '0.3px' }}>⛏️ 3D Mine Visualizer</h2>
+            
+            <select value={themeMode} onChange={(e) => setThemeMode(e.target.value)} style={{ padding: '5px 8px', borderRadius: '5px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
+              <option value="dark">🌙 Dark</option>
+              <option value="light">☀️ Light</option>
+              <option value="system">💻 System</option>
+            </select>
 
-        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text, maxWidth: '175px', fontSize: '12px' }} />
-        
-        {isProcessing && (
-          <div style={{ color: '#ffeb3b', fontWeight: 'bold', backgroundColor: '#333', padding: '4px 8px', borderRadius: '5px', fontSize: '12px' }}>
-            Processing... ⏳
+            <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text, maxWidth: '180px', fontSize: '12px' }} />
+
+            {isProcessing && (
+              <span style={{ color: '#ffeb3b', fontWeight: 'bold', backgroundColor: '#333', padding: '4px 10px', borderRadius: '5px', fontSize: '12px' }}>
+                Processing... ⏳
+              </span>
+            )}
           </div>
-        )}
 
-        <button onClick={() => setAutoRotate(!autoRotate)} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}>
-          {autoRotate ? 'Stop Rot.' : 'Auto-Rotate'}
-        </button>
+          {/* Right Quick Actions & Collapse Toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            {points.length > 0 && (
+              <>
+                <button onClick={handleExportReport} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: '#673ab7', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }} title="Download Engineering Report">
+                  Report 📄
+                </button>
+                <button onClick={handleScreenshot} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: '#00897b', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }} title="Capture 3D Screenshot">
+                  Snap 📸
+                </button>
+              </>
+            )}
 
-        {/* X-Axis Cross Section Slicer */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px' }}>
-          <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Slice X: {sliderUIValueX.toFixed(0)}m</label>
-          <input 
-            type="range" min={bounds.minX} max={bounds.maxX} step={xStep} value={sliderUIValueX} disabled={points.length === 0}
-            onChange={(e) => setSliderUIValueX(parseFloat(e.target.value))} 
-            onMouseUp={(e) => setSliceX(parseFloat(e.target.value))} 
-            onTouchEnd={(e) => setSliceX(parseFloat(e.target.value))} 
-            style={{ cursor: 'pointer', width: '60px' }} 
-          />
-        </div>
-
-        {/* Dynamic Top Cut Slider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px', borderBottom: '2px solid #00e5ff' }}>
-          <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Top Cut: {sliderTopCut.toFixed(1)}m</label>
-          <input 
-            type="range" min={bounds.minElev} max={bounds.maxElev} step={elevStep} value={sliderTopCut} disabled={points.length === 0}
-            onChange={(e) => setSliderTopCut(Math.max(parseFloat(e.target.value), sliderBottomCut))} 
-            onMouseUp={() => setTopCut(sliderTopCut)} 
-            onTouchEnd={() => setTopCut(sliderTopCut)} 
-            style={{ cursor: 'pointer', width: '65px' }} 
-          />
-        </div>
-
-        {/* Dynamic Bottom Cut Slider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px', borderBottom: '2px solid #ff4081' }}>
-          <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Btm Cut: {sliderBottomCut.toFixed(1)}m</label>
-          <input 
-            type="range" min={bounds.minElev} max={bounds.maxElev} step={elevStep} value={sliderBottomCut} disabled={points.length === 0}
-            onChange={(e) => setSliderBottomCut(Math.min(parseFloat(e.target.value), sliderTopCut))} 
-            onMouseUp={() => setBottomCut(sliderBottomCut)} 
-            onTouchEnd={() => setBottomCut(sliderBottomCut)} 
-            style={{ cursor: 'pointer', width: '65px' }} 
-          />
-        </div>
-
-        {/* Toggle 3D Laser Planes & Reset Cuts */}
-        {points.length > 0 && (
-          <>
             <button 
-              onClick={() => setShowPlanes(!showPlanes)}
-              style={{ padding: '6px 9px', cursor: 'pointer', backgroundColor: showPlanes ? '#009688' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '11px' }}
-              title="Toggle 3D Slicing Planes"
+              onClick={() => setIsToolbarOpen(!isToolbarOpen)} 
+              style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }}
             >
-              Planes 🟦
-            </button>
-            <button 
-              onClick={() => {
-                setSliceX(bounds.maxX); setSliderUIValueX(bounds.maxX);
-                setTopCut(bounds.maxElev); setSliderTopCut(bounds.maxElev);
-                setBottomCut(bounds.minElev); setSliderBottomCut(bounds.minElev);
-              }}
-              style={{ padding: '6px 9px', cursor: 'pointer', backgroundColor: '#607d8b', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '11px' }}
-            >
-              Reset 🔄
-            </button>
-          </>
-        )}
-
-        {/* Material Selector & Volume Button */}
-        <select 
-          value={materialType} 
-          onChange={(e) => setMaterialType(e.target.value)}
-          style={{ padding: '6px', borderRadius: '4px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
-        >
-          <option value="coal">⚫ Coal (1.4 t/m³)</option>
-          <option value="overburden">🟤 OB (2.4 t/m³)</option>
-          <option value="iron_ore">🔴 Iron Ore (3.8 t/m³)</option>
-        </select>
-
-        <button 
-          onClick={handleCalculateVolume} 
-          disabled={points.length === 0 || isProcessing}
-          style={{ padding: '6px 11px', cursor: (points.length === 0 || isProcessing) ? 'not-allowed' : 'pointer', backgroundColor: (points.length === 0 || isProcessing) ? '#888' : '#2196f3', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}
-        >
-          Calc Volume 📦
-        </button>
-
-        <button onClick={() => { setMeasureMode(!measureMode); setClickedPoints([]); setDistance(null); setSlopeAngle(null); }} style={{ padding: '6px 11px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}>
-          {measureMode ? 'Close Measure' : 'Measure 📏'}
-        </button>
-
-        {/* Export Report & 3D Screenshot Buttons */}
-        {points.length > 0 && (
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button onClick={handleExportReport} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: '#673ab7', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }} title="Download Engineering Report">
-              Report 📄
-            </button>
-            <button onClick={handleScreenshot} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: '#00897b', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }} title="Capture 3D Screenshot">
-              Snap 📸
+              {isToolbarOpen ? 'Hide Tools 🔼' : 'Show Tools 🔽'}
             </button>
           </div>
-        )}
-
-        {/* METRICS & ANALYTICS BAR */}
-        <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto', alignItems: 'center', flexWrap: 'wrap' }}>
-          {points.length > 0 && (
-            <div style={{ backgroundColor: themeColors.card, padding: '4px 9px', borderRadius: '5px', fontSize: '12px', fontWeight: 'bold' }}>
-              Depth: {(bounds.maxElev - bounds.minElev).toFixed(1)}m
-            </div>
-          )}
-
-          {calculatedVolume !== null && (
-            <div style={{ backgroundColor: '#00bcd4', padding: '4px 10px', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px', color: 'black', display: 'flex', gap: '8px' }}>
-              <span>Vol: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 0})} m³</span>
-              <span style={{ borderLeft: '2px solid rgba(0,0,0,0.25)', paddingLeft: '8px' }}>
-                Mass: {(estimatedTonnes / 100000).toFixed(2)} Lakh T
-              </span>
-              <span style={{ borderLeft: '2px solid rgba(0,0,0,0.25)', paddingLeft: '8px' }}>
-                🚛 {estimatedDumpers.toLocaleString()} Trips (100T)
-              </span>
-            </div>
-          )}
-
-          {distance !== null && slopeAngle !== null && (
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <div style={{ backgroundColor: '#ff9800', padding: '4px 10px', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px', color: 'black', display: 'flex', gap: '8px' }}>
-                <span>Dist: {distance.toFixed(1)}m</span>
-                <span style={{ borderLeft: '2px solid rgba(0,0,0,0.3)', paddingLeft: '8px' }}>Slope: {slopeAngle.toFixed(1)}°</span>
-              </div>
-              {safetyBadge && (
-                <div style={{ backgroundColor: safetyBadge.bg, color: safetyBadge.color, padding: '4px 9px', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }}>
-                  {safetyBadge.label}
-                </div>
-              )}
-            </div>
-          )}
         </div>
+
+        {/* Collapsible Secondary Engineering Controls Drawer */}
+        {isToolbarOpen && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '8px', paddingTop: '8px', borderTop: `1px solid ${themeColors.card}` }}>
+            
+            <button onClick={() => setAutoRotate(!autoRotate)} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }}>
+              {autoRotate ? 'Stop Rot.' : 'Auto-Rotate'}
+            </button>
+
+            {/* Point Size Slider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Pt Size: {pointSize.toFixed(1)}</label>
+              <input 
+                type="range" min="0.1" max="2.0" step="0.1" value={pointSize}
+                onChange={(e) => setPointSize(parseFloat(e.target.value))}
+                style={{ cursor: 'pointer', width: '55px' }}
+              />
+            </div>
+
+            {/* X-Axis Cross Section Slicer */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Slice X: {sliderUIValueX.toFixed(0)}m</label>
+              <input 
+                type="range" min={bounds.minX} max={bounds.maxX} step={xStep} value={sliderUIValueX} disabled={points.length === 0}
+                onChange={(e) => setSliderUIValueX(parseFloat(e.target.value))} 
+                onMouseUp={(e) => setSliceX(parseFloat(e.target.value))} 
+                onTouchEnd={(e) => setSliceX(parseFloat(e.target.value))} 
+                style={{ cursor: 'pointer', width: '60px' }} 
+              />
+            </div>
+
+            {/* Dynamic Top Cut Slider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px', borderBottom: '2px solid #00e5ff' }}>
+              <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Top Cut: {sliderTopCut.toFixed(1)}m</label>
+              <input 
+                type="range" min={bounds.minElev} max={bounds.maxElev} step={elevStep} value={sliderTopCut} disabled={points.length === 0}
+                onChange={(e) => setSliderTopCut(Math.max(parseFloat(e.target.value), sliderBottomCut))} 
+                onMouseUp={() => setTopCut(sliderTopCut)} 
+                onTouchEnd={() => setTopCut(sliderTopCut)} 
+                style={{ cursor: 'pointer', width: '65px' }} 
+              />
+            </div>
+
+            {/* Dynamic Bottom Cut Slider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px', borderBottom: '2px solid #ff4081' }}>
+              <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Btm Cut: {sliderBottomCut.toFixed(1)}m</label>
+              <input 
+                type="range" min={bounds.minElev} max={bounds.maxElev} step={elevStep} value={sliderBottomCut} disabled={points.length === 0}
+                onChange={(e) => setSliderBottomCut(Math.min(parseFloat(e.target.value), sliderTopCut))} 
+                onMouseUp={() => setBottomCut(sliderBottomCut)} 
+                onTouchEnd={() => setBottomCut(sliderBottomCut)} 
+                style={{ cursor: 'pointer', width: '65px' }} 
+              />
+            </div>
+
+            {/* Toggle 3D Laser Planes & Reset Cuts */}
+            {points.length > 0 && (
+              <>
+                <button 
+                  onClick={() => setShowPlanes(!showPlanes)}
+                  style={{ padding: '6px 9px', cursor: 'pointer', backgroundColor: showPlanes ? '#009688' : '#555', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }}
+                >
+                  Planes 🟦
+                </button>
+                <button 
+                  onClick={() => {
+                    setSliceX(bounds.maxX); setSliderUIValueX(bounds.maxX);
+                    setTopCut(bounds.maxElev); setSliderTopCut(bounds.maxElev);
+                    setBottomCut(bounds.minElev); setSliderBottomCut(bounds.minElev);
+                  }}
+                  style={{ padding: '6px 9px', cursor: 'pointer', backgroundColor: '#607d8b', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }}
+                >
+                  Reset 🔄
+                </button>
+              </>
+            )}
+
+            {/* Material Selector & Volume Button */}
+            <select 
+              value={materialType} 
+              onChange={(e) => setMaterialType(e.target.value)}
+              style={{ padding: '6px', borderRadius: '5px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+            >
+              <option value="coal">⚫ Coal (1.4 t/m³)</option>
+              <option value="overburden">🟤 OB (2.4 t/m³)</option>
+              <option value="iron_ore">🔴 Iron Ore (3.8 t/m³)</option>
+            </select>
+
+            <button 
+              onClick={handleCalculateVolume} 
+              disabled={points.length === 0 || isProcessing}
+              style={{ padding: '6px 11px', cursor: (points.length === 0 || isProcessing) ? 'not-allowed' : 'pointer', backgroundColor: (points.length === 0 || isProcessing) ? '#888' : '#2196f3', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }}
+            >
+              Calc Volume 📦
+            </button>
+
+            <button onClick={() => { setMeasureMode(!measureMode); setClickedPoints([]); setDistance(null); setSlopeAngle(null); }} style={{ padding: '6px 11px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }}>
+              {measureMode ? 'Close Measure' : 'Measure 📏'}
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* 3D Scene Viewer (preserveDrawingBuffer enabled for screenshot capture) */}
-      <div style={{ flex: 1 }}>
-        <Canvas gl={{ preserveDrawingBuffer: true }} camera={{ position: [0, 5, 12] }}>
+      {/* 3D SCENE VIEWPORT (minHeight: 0 + overflow: hidden prevents infinite canvas growth on toggle!) */}
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+        <Canvas style={{ width: '100%', height: '100%' }} gl={{ preserveDrawingBuffer: true }} camera={{ position: [0, 5, 12] }}>
           <ambientLight intensity={activeTheme === 'dark' ? 0.8 : 1.2} />
           <gridHelper key={activeTheme} args={[50, 50, themeColors.gridMain, themeColors.gridSub]} />
           
           <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} sliceX={sliceX} topCut={topCut} bottomCut={bottomCut} />
           
-          {/* Render 3D Laser Cut Planes when file is loaded */}
           {points.length > 0 && (
             <SlicingPlanes bounds={bounds} topCut={topCut} bottomCut={bottomCut} showPlanes={showPlanes} />
           )}
@@ -585,6 +588,64 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
           <OrbitControls autoRotate={autoRotate} />
         </Canvas>
       </div>
+
+      {/* 🎯 VIEWPORT-LOCKED FLOATING GLASS HUD (position: fixed keeps it rock-solid at bottom-left) */}
+      {points.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          left: '20px',
+          backgroundColor: themeColors.hudBg,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          border: `1px solid ${themeColors.hudBorder}`,
+          color: themeColors.text,
+          padding: '12px 16px',
+          borderRadius: '10px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          maxWidth: 'calc(100vw - 40px)',
+          boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
+          pointerEvents: 'none',
+          zIndex: 50
+        }}>
+          <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.8px', opacity: 0.75 }}>
+            📊 Live Survey Telemetry
+          </div>
+
+          {/* Basic Dataset Info */}
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '12px', fontWeight: 'bold' }}>
+            <span>🟢 Points: {points.length.toLocaleString()}</span>
+            <span>↕️ Pit Depth: {(bounds.maxElev - bounds.minElev).toFixed(1)}m</span>
+            <span>✂️ Slice Height: {(topCut - bottomCut).toFixed(1)}m</span>
+          </div>
+
+          {/* Volumetric & Fleet Metrics */}
+          {calculatedVolume !== null && (
+            <div style={{ backgroundColor: '#00bcd4', color: 'black', padding: '6px 10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <span>📦 Vol: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 0})} m³</span>
+              <span>⚖️ Mass: {(estimatedTonnes / 100000).toFixed(2)} Lakh T</span>
+              <span>🚛 Fleet (100T): {estimatedDumpers.toLocaleString()} Trips</span>
+            </div>
+          )}
+
+          {/* Geotechnical Slope & DGMS Safety Alert */}
+          {distance !== null && slopeAngle !== null && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ backgroundColor: '#ff9800', color: 'black', padding: '5px 10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '12px', display: 'flex', gap: '8px' }}>
+                <span>📏 Dist: {distance.toFixed(1)}m</span>
+                <span>📐 Slope: {slopeAngle.toFixed(1)}°</span>
+              </div>
+              {safetyBadge && (
+                <div style={{ backgroundColor: safetyBadge.bg, color: safetyBadge.color, padding: '5px 10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px' }}>
+                  {safetyBadge.label}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
