@@ -11,9 +11,7 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
   const geometry = useMemo(() => {
     if (!data || data.length === 0) return null;
 
-    let minY = Infinity;
-    let maxY = -Infinity;
-
+    let minY = Infinity, maxY = -Infinity;
     data.forEach((point) => {
       const y = parseFloat(point.Z) || 0; 
       if (y < minY) minY = y;
@@ -21,7 +19,6 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
     });
 
     const filteredData = data.filter(point => (parseFloat(point.X) || 0) <= sliceX);
-    
     if (filteredData.length === 0) return null;
 
     const geo = new THREE.BufferGeometry();
@@ -80,13 +77,15 @@ function App() {
   
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // NEW FEATURE: Theme State Management
-  const [themeMode, setThemeMode] = useState('dark'); // 'dark', 'light', 'system'
+  // NEW FEATURE: Volume Calculation State
+  const [calculatedVolume, setCalculatedVolume] = useState(null);
+
+  // Theme Management
+  const [themeMode, setThemeMode] = useState('dark');
   const [isSystemDark, setIsSystemDark] = useState(
     window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
   );
 
-  // Listen for system theme changes dynamically
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = (e) => setIsSystemDark(e.matches);
@@ -94,9 +93,7 @@ function App() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
-  // Determine actual active theme colors
   const activeTheme = themeMode === 'system' ? (isSystemDark ? 'dark' : 'light') : themeMode;
-  
   const themeColors = activeTheme === 'dark' 
     ? { bg: '#1e1e1e', nav: '#2d2d2d', text: 'white', card: '#333', gridMain: '#444', gridSub: '#222' }
     : { bg: '#f0f2f5', nav: '#ffffff', text: '#333333', card: '#e4e6eb', gridMain: '#cccccc', gridSub: '#dddddd' };
@@ -106,6 +103,7 @@ function App() {
     if (!file) return;
 
     setIsProcessing(true);
+    setCalculatedVolume(null); // Reset volume on new upload
     const fileExtension = file.name.split('.').pop().toLowerCase();
 
     if (fileExtension === 'csv') {
@@ -135,9 +133,74 @@ function App() {
         setIsProcessing(false);
       }
     } else {
-      alert("Unsupported file type! Please upload a .csv or .las file.");
+      alert("Unsupported file type!");
       setIsProcessing(false);
     }
+  };
+
+  // 🚀 GRID-BASED DEM VOLUME CALCULATION LOGIC 🚀
+  const handleCalculateVolume = () => {
+    if (points.length === 0) return;
+    
+    setIsProcessing(true);
+    
+    // Use setTimeout to allow React to render the "Processing" UI before heavy math freezes the thread slightly
+    setTimeout(() => {
+      let minX = Infinity, maxX = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+      let maxY = -Infinity; // Surface Reference Level
+
+      points.forEach(p => {
+        const x = parseFloat(p.X) || 0;
+        const y = parseFloat(p.Z) || 0; // Depth/Elevation
+        const z = parseFloat(p.Y) || 0;
+
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+        if (y > maxY) maxY = y; // Highest elevation is our surface reference
+      });
+
+      // Divide the mine into a 100x100 grid (10,000 cells)
+      const gridResolution = 100;
+      const cellWidth = (maxX - minX) / gridResolution;
+      const cellLength = (maxZ - minZ) / gridResolution;
+      const cellArea = cellWidth * cellLength;
+
+      const grid = new Float32Array(gridResolution * gridResolution).fill(0);
+      const counts = new Int32Array(gridResolution * gridResolution).fill(0);
+
+      points.forEach(p => {
+        const x = parseFloat(p.X) || 0;
+        const y = parseFloat(p.Z) || 0;
+        const z = parseFloat(p.Y) || 0;
+
+        let col = Math.floor((x - minX) / cellWidth);
+        let row = Math.floor((z - minZ) / cellLength);
+        
+        if (col >= gridResolution) col = gridResolution - 1;
+        if (row >= gridResolution) row = gridResolution - 1;
+
+        const index = row * gridResolution + col;
+        grid[index] += y;
+        counts[index] += 1;
+      });
+
+      let totalCutVolume = 0;
+      for (let i = 0; i < grid.length; i++) {
+        if (counts[i] > 0) {
+          const averageElevation = grid[i] / counts[i];
+          const depthFromSurface = maxY - averageElevation;
+          if (depthFromSurface > 0) {
+            totalCutVolume += (depthFromSurface * cellArea);
+          }
+        }
+      }
+
+      setCalculatedVolume(totalCutVolume);
+      setIsProcessing(false);
+    }, 100);
   };
 
   const handlePointClick = (event) => {
@@ -167,72 +230,60 @@ function App() {
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: themeColors.bg, transition: 'background-color 0.3s' }}>
       
-      {/* Top Navigation Panel */}
       <div style={{ padding: '15px', backgroundColor: themeColors.nav, color: themeColors.text, borderBottom: `2px solid ${themeColors.card}`, display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', transition: 'all 0.3s' }}>
-        <h2 style={{ margin: '0' }}>3D Mine Survey Visualizer</h2>
+        <h2 style={{ margin: '0', fontSize: '1.2rem' }}>3D Mine Visualizer</h2>
         
-        {/* NEW UI: Theme Selector */}
-        <select 
-          value={themeMode} 
-          onChange={(e) => setThemeMode(e.target.value)}
-          style={{ padding: '8px', borderRadius: '4px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          <option value="dark">🌙 Dark</option>
-          <option value="light">☀️ Light</option>
-          <option value="system">💻 System</option>
+        <select value={themeMode} onChange={(e) => setThemeMode(e.target.value)} style={{ padding: '8px', borderRadius: '4px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
+          <option value="dark">🌙</option>
+          <option value="light">☀️</option>
+          <option value="system">💻</option>
         </select>
 
-        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text }} />
+        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text, maxWidth: '200px' }} />
         
         {isProcessing && (
           <div style={{ color: '#ffeb3b', fontWeight: 'bold', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
-            Processing Data... ⏳
+            Processing... ⏳
           </div>
         )}
         
-        <button 
-          onClick={() => setAutoRotate(!autoRotate)}
-          style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
-        >
-          {autoRotate ? 'Stop Rotation' : 'Auto-Rotate'}
+        <button onClick={() => setAutoRotate(!autoRotate)} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
+          {autoRotate ? 'Stop Rot.' : 'Auto-Rotate'}
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px' }}>
-          <label style={{ fontSize: '14px', fontWeight: 'bold' }}>Slice ✂️</label>
-          <input 
-            type="range" min="-50" max="50" step="1" value={sliderUIValue} 
-            onChange={(e) => setSliderUIValue(parseFloat(e.target.value))} 
-            onMouseUp={(e) => setSliceX(parseFloat(e.target.value))} 
-            onTouchEnd={(e) => setSliceX(parseFloat(e.target.value))} 
-            style={{ cursor: 'pointer' }}
-          />
+        {/* VOLUME CALCULATION BUTTON */}
+        <button 
+          onClick={handleCalculateVolume} 
+          disabled={points.length === 0 || isProcessing}
+          style={{ padding: '8px 15px', cursor: (points.length === 0 || isProcessing) ? 'not-allowed' : 'pointer', backgroundColor: (points.length === 0 || isProcessing) ? '#888' : '#2196f3', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
+        >
+          Calculate Volume 📦
+        </button>
+
+        <button onClick={() => { setMeasureMode(!measureMode); setClickedPoints([]); setDistance(null); setSlopeAngle(null); }} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
+          {measureMode ? 'Close Measure' : 'Measure 📏'}
+        </button>
+
+        {/* METRICS DISPLAY BAR */}
+        <div style={{ display: 'flex', gap: '15px', marginLeft: 'auto' }}>
+          {calculatedVolume !== null && (
+            <div style={{ backgroundColor: '#00bcd4', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black' }}>
+              Cut Volume: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 2})} m³
+            </div>
+          )}
+
+          {distance !== null && slopeAngle !== null && (
+            <div style={{ backgroundColor: '#ff9800', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black', display: 'flex', gap: '10px' }}>
+              <span>Dist: {distance.toFixed(2)}m</span>
+              <span style={{ borderLeft: '2px solid rgba(0,0,0,0.3)', paddingLeft: '10px' }}>Slope: {slopeAngle.toFixed(1)}°</span>
+            </div>
+          )}
         </div>
-
-        <button 
-          onClick={() => {
-            setMeasureMode(!measureMode);
-            setClickedPoints([]);
-            setDistance(null);
-            setSlopeAngle(null);
-          }}
-          style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
-        >
-          {measureMode ? 'Close Measure' : 'Measure & Slope 📏'}
-        </button>
-
-        {distance !== null && slopeAngle !== null && (
-          <div style={{ backgroundColor: '#ff9800', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black', display: 'flex', gap: '15px' }}>
-            <span>Distance: {distance.toFixed(2)} m</span>
-            <span style={{ borderLeft: '2px solid rgba(0,0,0,0.3)', paddingLeft: '15px' }}>Slope: {slopeAngle.toFixed(1)}°</span>
-          </div>
-        )}
       </div>
 
-      {/* 3D Scene Viewer */}
       <div style={{ flex: 1 }}>
         <Canvas camera={{ position: [0, 5, 12] }}>
           <ambientLight intensity={activeTheme === 'dark' ? 0.8 : 1.2} />
-          {/* Grid color changes dynamically based on theme */}
           <gridHelper key={activeTheme} args={[50, 50, themeColors.gridMain, themeColors.gridSub]} />
           
           <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} sliceX={sliceX} />
