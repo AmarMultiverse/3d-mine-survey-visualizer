@@ -7,7 +7,7 @@ import { parse } from '@loaders.gl/core';
 import { LASLoader } from '@loaders.gl/las';
 
 // COMPONENT 1: Optimized Point Cloud Renderer
-function PointCloud({ data, pointSize, onPointClick, sliceX }) {
+function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut }) {
   const geometry = useMemo(() => {
     if (!data || data.length === 0) return null;
 
@@ -18,7 +18,13 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
       if (y > maxY) maxY = y;
     });
 
-    const filteredData = data.filter(point => (parseFloat(point.X) || 0) <= sliceX);
+    // VISUAL FILTERING: Apply X-axis slice AND Horizontal Elevation (Y-axis) slices
+    const filteredData = data.filter(point => {
+      const x = parseFloat(point.X) || 0;
+      const y = parseFloat(point.Z) || 0;
+      return x <= sliceX && y <= topCut && y >= bottomCut;
+    });
+    
     if (filteredData.length === 0) return null;
 
     const geo = new THREE.BufferGeometry();
@@ -50,7 +56,7 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     return geo;
-  }, [data, sliceX]);
+  }, [data, sliceX, topCut, bottomCut]);
 
   if (!geometry) return null;
 
@@ -72,15 +78,18 @@ function App() {
   const [distance, setDistance] = useState(null);
   const [slopeAngle, setSlopeAngle] = useState(null);
 
-  const [sliceX, setSliceX] = useState(50);
-  const [sliderUIValue, setSliderUIValue] = useState(50);
+  const [sliceX, setSliceX] = useState(250);
+  const [sliderUIValueX, setSliderUIValueX] = useState(250);
   
-  const [isProcessing, setIsProcessing] = useState(false);
+  // NEW FEATURE: Horizontal Slicing States (Default wide range to show full mine initially)
+  const [topCut, setTopCut] = useState(150);
+  const [sliderTopCut, setSliderTopCut] = useState(150);
+  const [bottomCut, setBottomCut] = useState(-150);
+  const [sliderBottomCut, setSliderBottomCut] = useState(-150);
 
-  // NEW FEATURE: Volume Calculation State
+  const [isProcessing, setIsProcessing] = useState(false);
   const [calculatedVolume, setCalculatedVolume] = useState(null);
 
-  // Theme Management
   const [themeMode, setThemeMode] = useState('dark');
   const [isSystemDark, setIsSystemDark] = useState(
     window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -103,19 +112,13 @@ function App() {
     if (!file) return;
 
     setIsProcessing(true);
-    setCalculatedVolume(null); // Reset volume on new upload
+    setCalculatedVolume(null);
     const fileExtension = file.name.split('.').pop().toLowerCase();
 
     if (fileExtension === 'csv') {
       Papa.parse(file, {
-        header: true,
-        dynamicTyping: true,
-        skipEmptyLines: true,
-        worker: true,
-        complete: (results) => {
-          setPoints(results.data);
-          setIsProcessing(false);
-        }
+        header: true, dynamicTyping: true, skipEmptyLines: true, worker: true,
+        complete: (results) => { setPoints(results.data); setIsProcessing(false); }
       });
     } else if (fileExtension === 'las') {
       try {
@@ -129,40 +132,34 @@ function App() {
         setPoints(formattedPoints);
       } catch (error) {
         alert("Failed to parse the .las file.");
-      } finally {
-        setIsProcessing(false);
-      }
+      } finally { setIsProcessing(false); }
     } else {
-      alert("Unsupported file type!");
-      setIsProcessing(false);
+      alert("Unsupported file type!"); setIsProcessing(false);
     }
   };
 
-  // 🚀 GRID-BASED DEM VOLUME CALCULATION LOGIC 🚀
+  // 🚀 ADVANCED FLITCH VOLUME CALCULATION LOGIC 🚀
   const handleCalculateVolume = () => {
     if (points.length === 0) return;
-    
     setIsProcessing(true);
     
-    // Use setTimeout to allow React to render the "Processing" UI before heavy math freezes the thread slightly
     setTimeout(() => {
       let minX = Infinity, maxX = -Infinity;
       let minZ = Infinity, maxZ = -Infinity;
-      let maxY = -Infinity; // Surface Reference Level
+      let maxY = -Infinity; 
 
       points.forEach(p => {
         const x = parseFloat(p.X) || 0;
-        const y = parseFloat(p.Z) || 0; // Depth/Elevation
+        const y = parseFloat(p.Z) || 0; 
         const z = parseFloat(p.Y) || 0;
 
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (z < minZ) minZ = z;
         if (z > maxZ) maxZ = z;
-        if (y > maxY) maxY = y; // Highest elevation is our surface reference
+        if (y > maxY) maxY = y; 
       });
 
-      // Divide the mine into a 100x100 grid (10,000 cells)
       const gridResolution = 100;
       const cellWidth = (maxX - minX) / gridResolution;
       const cellLength = (maxZ - minZ) / gridResolution;
@@ -191,9 +188,15 @@ function App() {
       for (let i = 0; i < grid.length; i++) {
         if (counts[i] > 0) {
           const averageElevation = grid[i] / counts[i];
-          const depthFromSurface = maxY - averageElevation;
-          if (depthFromSurface > 0) {
-            totalCutVolume += (depthFromSurface * cellArea);
+          
+          // MATHEMATICAL INTERSECTION: Only calculate volume between user's Top and Bottom Cut planes
+          const topBoundary = Math.min(maxY, topCut);
+          const bottomBoundary = Math.max(averageElevation, bottomCut);
+          
+          const sliceDepth = topBoundary - bottomBoundary;
+          
+          if (sliceDepth > 0) {
+            totalCutVolume += (sliceDepth * cellArea);
           }
         }
       }
@@ -209,9 +212,7 @@ function App() {
     const newPoint = event.point;
 
     if (clickedPoints.length === 0 || clickedPoints.length === 2) {
-      setClickedPoints([newPoint]);
-      setDistance(null);
-      setSlopeAngle(null);
+      setClickedPoints([newPoint]); setDistance(null); setSlopeAngle(null);
     } else if (clickedPoints.length === 1) {
       const p1 = clickedPoints[0];
       const p2 = newPoint;
@@ -221,9 +222,7 @@ function App() {
       const horizontalDist = Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.z - p2.z, 2));
       const angleInDegrees = Math.atan2(verticalDiff, horizontalDist) * (180 / Math.PI);
       
-      setClickedPoints([p1, p2]);
-      setDistance(dist);
-      setSlopeAngle(angleInDegrees);
+      setClickedPoints([p1, p2]); setDistance(dist); setSlopeAngle(angleInDegrees);
     }
   };
 
@@ -241,34 +240,42 @@ function App() {
 
         <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text, maxWidth: '200px' }} />
         
-        {isProcessing && (
-          <div style={{ color: '#ffeb3b', fontWeight: 'bold', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
-            Processing... ⏳
-          </div>
-        )}
-        
         <button onClick={() => setAutoRotate(!autoRotate)} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
           {autoRotate ? 'Stop Rot.' : 'Auto-Rotate'}
         </button>
 
-        {/* VOLUME CALCULATION BUTTON */}
+        {/* NEW SLIDERS: Horizontal Slicing Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px' }}>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Top Cut:</label>
+          <input type="range" min="-150" max="150" step="1" value={sliderTopCut} 
+            onChange={(e) => setSliderTopCut(parseFloat(e.target.value))} 
+            onMouseUp={(e) => setTopCut(parseFloat(e.target.value))} 
+            style={{ cursor: 'pointer', width: '80px' }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px' }}>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Btm Cut:</label>
+          <input type="range" min="-150" max="150" step="1" value={sliderBottomCut} 
+            onChange={(e) => setSliderBottomCut(parseFloat(e.target.value))} 
+            onMouseUp={(e) => setBottomCut(parseFloat(e.target.value))} 
+            style={{ cursor: 'pointer', width: '80px' }} />
+        </div>
+
         <button 
           onClick={handleCalculateVolume} 
           disabled={points.length === 0 || isProcessing}
           style={{ padding: '8px 15px', cursor: (points.length === 0 || isProcessing) ? 'not-allowed' : 'pointer', backgroundColor: (points.length === 0 || isProcessing) ? '#888' : '#2196f3', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
         >
-          Calculate Volume 📦
+          Calc Volume 📦
         </button>
 
         <button onClick={() => { setMeasureMode(!measureMode); setClickedPoints([]); setDistance(null); setSlopeAngle(null); }} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
           {measureMode ? 'Close Measure' : 'Measure 📏'}
         </button>
 
-        {/* METRICS DISPLAY BAR */}
         <div style={{ display: 'flex', gap: '15px', marginLeft: 'auto' }}>
           {calculatedVolume !== null && (
             <div style={{ backgroundColor: '#00bcd4', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', color: 'black' }}>
-              Cut Volume: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 2})} m³
+              Vol: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 2})} m³
             </div>
           )}
 
@@ -286,7 +293,7 @@ function App() {
           <ambientLight intensity={activeTheme === 'dark' ? 0.8 : 1.2} />
           <gridHelper key={activeTheme} args={[50, 50, themeColors.gridMain, themeColors.gridSub]} />
           
-          <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} sliceX={sliceX} />
+          <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} sliceX={sliceX} topCut={topCut} bottomCut={bottomCut} />
           
           {clickedPoints.map((pos, idx) => (
             <Sphere key={idx} args={[0.5, 16, 16]} position={pos}>
