@@ -6,6 +6,13 @@ import * as THREE from 'three';
 import { parse } from '@loaders.gl/core';
 import { LASLoader } from '@loaders.gl/las';
 
+// Material Specific Gravity Constants (Tonnes per Cubic Meter)
+const MATERIALS = {
+  coal: { name: 'Coal (1.4 t/m³)', density: 1.4 },
+  overburden: { name: 'Overburden (2.4 t/m³)', density: 2.4 },
+  iron_ore: { name: 'Iron Ore (3.8 t/m³)', density: 3.8 }
+};
+
 // COMPONENT 1: Optimized Point Cloud Renderer
 function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut }) {
   const geometry = useMemo(() => {
@@ -18,7 +25,6 @@ function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut }
       if (y > maxY) maxY = y;
     }
 
-    // VISUAL FILTERING: Filter points within X-slice and Horizontal Elevation bounds
     const filteredData = data.filter(point => {
       const x = parseFloat(point.X) || 0;
       const y = parseFloat(point.Z) || 0;
@@ -44,7 +50,6 @@ function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut }
       positions[i * 3 + 1] = y;
       positions[i * 3 + 2] = z;
 
-      // Elevation heatmap coloring (Blue at bottom to Red at top)
       const normalizedHeight = (y - minY) / heightRange;
       const hue = 0.6 * (1 - normalizedHeight);
       color.setHSL(hue, 1.0, 0.5);
@@ -69,11 +74,42 @@ function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut }
   );
 }
 
-// COMPONENT 2: Main Application UI
+// COMPONENT 2: 3D Visual Slicing Planes (CAD Laser Sheets)
+function SlicingPlanes({ bounds, topCut, bottomCut, showPlanes }) {
+  if (!showPlanes) return null;
+
+  const width = Math.max(50, (bounds.maxX - bounds.minX) * 1.15);
+  const length = Math.max(50, (bounds.maxZ - bounds.minZ) * 1.15);
+  const centerX = (bounds.maxX + bounds.minX) / 2;
+  const centerZ = (bounds.maxZ + bounds.minZ) / 2;
+
+  return (
+    <group>
+      {/* Top Cut Laser Plane (Cyan) */}
+      <mesh position={[centerX, topCut, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[width, length]} />
+        <meshBasicMaterial color="#00e5ff" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+
+      {/* Bottom Cut Laser Plane (Magenta) */}
+      <mesh position={[centerX, bottomCut, centerZ]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[width, length]} />
+        <meshBasicMaterial color="#ff4081" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+// COMPONENT 3: Main Application UI & Engineering Engine
 function App() {
   const [points, setPoints] = useState([]);
+  const [fileName, setFileName] = useState('None');
   const [autoRotate, setAutoRotate] = useState(false);
   const [pointSize, setPointSize] = useState(0.3);
+  const [showPlanes, setShowPlanes] = useState(true);
+
+  // Material Selection State for Tonnage & Fleet
+  const [materialType, setMaterialType] = useState('coal');
 
   // Measurement & Slope States
   const [measureMode, setMeasureMode] = useState(false);
@@ -81,9 +117,10 @@ function App() {
   const [distance, setDistance] = useState(null);
   const [slopeAngle, setSlopeAngle] = useState(null);
 
-  // DYNAMIC BOUNDARY STATES (Auto-calibrated per uploaded mine)
+  // Dynamic Boundary States
   const [bounds, setBounds] = useState({
     minX: -100, maxX: 100,
+    minZ: -100, maxZ: 100,
     minElev: -100, maxElev: 0
   });
 
@@ -123,14 +160,20 @@ function App() {
     if (!dataset || dataset.length === 0) return;
 
     let minX = Infinity, maxX = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
     let minElev = Infinity, maxElev = -Infinity;
 
     for (let i = 0; i < dataset.length; i++) {
       const x = parseFloat(dataset[i].X);
-      const y = parseFloat(dataset[i].Z); // Z in file is vertical elevation
+      const y = parseFloat(dataset[i].Z); // Elevation
+      const z = parseFloat(dataset[i].Y); // Horizontal Y mapped to Three.js Z
       if (!isNaN(x)) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
+      }
+      if (!isNaN(z)) {
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
       }
       if (!isNaN(y)) {
         if (y < minElev) minElev = y;
@@ -138,34 +181,29 @@ function App() {
       }
     }
 
-    // Round cleanly to 1 decimal place to avoid floating point issues
     const cleanMinX = Math.floor(minX * 10) / 10;
     const cleanMaxX = Math.ceil(maxX * 10) / 10;
+    const cleanMinZ = Math.floor(minZ * 10) / 10;
+    const cleanMaxZ = Math.ceil(maxZ * 10) / 10;
     const cleanMinElev = Math.floor(minElev * 10) / 10;
     const cleanMaxElev = Math.ceil(maxElev * 10) / 10;
 
     setBounds({
-      minX: cleanMinX,
-      maxX: cleanMaxX,
-      minElev: cleanMinElev,
-      maxElev: cleanMaxElev
+      minX: cleanMinX, maxX: cleanMaxX,
+      minZ: cleanMinZ, maxZ: cleanMaxZ,
+      minElev: cleanMinElev, maxElev: cleanMaxElev
     });
 
-    // Reset sliders to encompass 100% of the loaded mine
-    setSliceX(cleanMaxX);
-    setSliderUIValueX(cleanMaxX);
-
-    setTopCut(cleanMaxElev);
-    setSliderTopCut(cleanMaxElev);
-
-    setBottomCut(cleanMinElev);
-    setSliderBottomCut(cleanMinElev);
+    setSliceX(cleanMaxX); setSliderUIValueX(cleanMaxX);
+    setTopCut(cleanMaxElev); setSliderTopCut(cleanMaxElev);
+    setBottomCut(cleanMinElev); setSliderBottomCut(cleanMinElev);
   };
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
+    setFileName(file.name);
     setIsProcessing(true);
     setCalculatedVolume(null);
     setClickedPoints([]);
@@ -205,7 +243,7 @@ function App() {
     }
   };
 
-  // 🚀 BOUNDED FLITCH VOLUME CALCULATION (DEM) 🚀
+  // BOUNDED FLITCH VOLUME CALCULATION (DEM)
   const handleCalculateVolume = () => {
     if (points.length === 0) return;
     setIsProcessing(true);
@@ -257,8 +295,6 @@ function App() {
       for (let i = 0; i < grid.length; i++) {
         if (counts[i] > 0) {
           const averageElevation = grid[i] / counts[i];
-
-          // Volume bounded strictly between Top Cut and Bottom Cut
           const topBoundary = Math.min(maxY, topCut);
           const bottomBoundary = Math.max(averageElevation, bottomCut);
 
@@ -298,16 +334,82 @@ function App() {
     }
   };
 
-  // Calculate dynamic step size so slider moves smoothly regardless of mine size
+  // DGMS Slope Stability Safety Evaluation
+  const getSlopeSafetyStatus = (angle) => {
+    if (angle === null) return null;
+    if (angle <= 45) return { label: 'SAFE (Stable) ✅', bg: '#4caf50', color: 'white' };
+    if (angle <= 65) return { label: 'BENCH CAUTION ⚠️', bg: '#ffeb3b', color: 'black' };
+    return { label: 'CRITICAL (>65° DGMS Alert) 🚨', bg: '#f44336', color: 'white' };
+  };
+
+  // Export Engineering Survey Report (.txt)
+  const handleExportReport = () => {
+    if (points.length === 0) return;
+    const density = MATERIALS[materialType].density;
+    const tonnage = calculatedVolume ? calculatedVolume * density : 0;
+    const dumpers = calculatedVolume ? Math.ceil(tonnage / 100) : 0;
+    const safety = getSlopeSafetyStatus(slopeAngle);
+
+    const reportText = `====================================================
+      3D MINE SURVEY & EXCAVATION REPORT
+====================================================
+Timestamp          : ${new Date().toLocaleString()}
+Dataset File       : ${fileName}
+Total Survey Points: ${points.length.toLocaleString()}
+
+--- GEOMETRIC BOUNDARIES ---
+X-Axis Span        : ${bounds.minX}m to ${bounds.maxX}m
+Elevation Range    : ${bounds.minElev}m (Bottom) to ${bounds.maxElev}m (Top)
+Total Pit Depth    : ${(bounds.maxElev - bounds.minElev).toFixed(2)} m
+
+--- ACTIVE SLICING PLANES (FLITCH BOUNDS) ---
+X-Cross Section    : <= ${sliceX.toFixed(2)} m
+Top Cut Plane      : ${topCut.toFixed(2)} m
+Bottom Cut Plane   : ${bottomCut.toFixed(2)} m
+Active Slice Height: ${(topCut - bottomCut).toFixed(2)} m
+
+--- VOLUMETRIC & HAULAGE ESTIMATION (100x100 DEM) ---
+Target Material    : ${MATERIALS[materialType].name}
+Excavated Volume   : ${calculatedVolume !== null ? calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 2}) + ' m³' : 'Not Calculated'}
+Estimated Mass     : ${calculatedVolume !== null ? tonnage.toLocaleString(undefined, {maximumFractionDigits: 2}) + ' Tonnes' : 'N/A'}
+Haulage (100T Cat) : ${calculatedVolume !== null ? dumpers.toLocaleString() + ' Trips' : 'N/A'}
+
+--- GEOTECHNICAL SLOPE ANALYSIS ---
+Measured 3D Dist.  : ${distance !== null ? distance.toFixed(2) + ' m' : 'Not Measured'}
+Measured Slope     : ${slopeAngle !== null ? slopeAngle.toFixed(2) + '°' : 'Not Measured'}
+DGMS Safety Status : ${safety ? safety.label : 'N/A'}
+====================================================`;
+
+    const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `Mine_Survey_Report_${Date.now()}.txt`;
+    link.click();
+  };
+
+  // Capture 3D Viewport Screenshot (.png)
+  const handleScreenshot = () => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.download = `Mine_3D_View_${Date.now()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
   const elevStep = Math.max(0.1, parseFloat(((bounds.maxElev - bounds.minElev) / 200).toFixed(2)));
   const xStep = Math.max(0.1, parseFloat(((bounds.maxX - bounds.minX) / 200).toFixed(2)));
+  const currentDensity = MATERIALS[materialType].density;
+  const estimatedTonnes = calculatedVolume !== null ? calculatedVolume * currentDensity : null;
+  const estimatedDumpers = estimatedTonnes !== null ? Math.ceil(estimatedTonnes / 100) : null;
+  const safetyBadge = getSlopeSafetyStatus(slopeAngle);
 
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: themeColors.bg, transition: 'background-color 0.3s' }}>
       
-      {/* Top Navigation Panel */}
-      <div style={{ padding: '12px 15px', backgroundColor: themeColors.nav, color: themeColors.text, borderBottom: `2px solid ${themeColors.card}`, display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', transition: 'all 0.3s' }}>
-        <h2 style={{ margin: '0', fontSize: '1.15rem' }}>3D Mine Visualizer</h2>
+      {/* Top Navigation & Engineering Controls */}
+      <div style={{ padding: '10px 15px', backgroundColor: themeColors.nav, color: themeColors.text, borderBottom: `2px solid ${themeColors.card}`, display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', transition: 'all 0.3s' }}>
+        <h2 style={{ margin: '0', fontSize: '1.1rem' }}>3D Mine Visualizer</h2>
         
         <select value={themeMode} onChange={(e) => setThemeMode(e.target.value)} style={{ padding: '6px', borderRadius: '4px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
           <option value="dark">🌙</option>
@@ -315,126 +417,161 @@ function App() {
           <option value="system">💻</option>
         </select>
 
-        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text, maxWidth: '185px', fontSize: '13px' }} />
+        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text, maxWidth: '175px', fontSize: '12px' }} />
         
         {isProcessing && (
-          <div style={{ color: '#ffeb3b', fontWeight: 'bold', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px', fontSize: '13px' }}>
+          <div style={{ color: '#ffeb3b', fontWeight: 'bold', backgroundColor: '#333', padding: '4px 8px', borderRadius: '5px', fontSize: '12px' }}>
             Processing... ⏳
           </div>
         )}
 
-        <button onClick={() => setAutoRotate(!autoRotate)} style={{ padding: '7px 12px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px' }}>
+        <button onClick={() => setAutoRotate(!autoRotate)} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: autoRotate ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}>
           {autoRotate ? 'Stop Rot.' : 'Auto-Rotate'}
         </button>
 
         {/* X-Axis Cross Section Slicer */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Slice X: {sliderUIValueX.toFixed(0)}m</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px' }}>
+          <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Slice X: {sliderUIValueX.toFixed(0)}m</label>
           <input 
-            type="range" 
-            min={bounds.minX} max={bounds.maxX} step={xStep} 
-            value={sliderUIValueX} 
-            disabled={points.length === 0}
+            type="range" min={bounds.minX} max={bounds.maxX} step={xStep} value={sliderUIValueX} disabled={points.length === 0}
             onChange={(e) => setSliderUIValueX(parseFloat(e.target.value))} 
             onMouseUp={(e) => setSliceX(parseFloat(e.target.value))} 
             onTouchEnd={(e) => setSliceX(parseFloat(e.target.value))} 
-            style={{ cursor: 'pointer', width: '70px' }} 
+            style={{ cursor: 'pointer', width: '60px' }} 
           />
         </div>
 
         {/* Dynamic Top Cut Slider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Top Cut: {sliderTopCut.toFixed(1)}m</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px', borderBottom: '2px solid #00e5ff' }}>
+          <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Top Cut: {sliderTopCut.toFixed(1)}m</label>
           <input 
-            type="range" 
-            min={bounds.minElev} max={bounds.maxElev} step={elevStep} 
-            value={sliderTopCut} 
-            disabled={points.length === 0}
-            onChange={(e) => {
-              const val = Math.max(parseFloat(e.target.value), sliderBottomCut);
-              setSliderTopCut(val);
-            }} 
+            type="range" min={bounds.minElev} max={bounds.maxElev} step={elevStep} value={sliderTopCut} disabled={points.length === 0}
+            onChange={(e) => setSliderTopCut(Math.max(parseFloat(e.target.value), sliderBottomCut))} 
             onMouseUp={() => setTopCut(sliderTopCut)} 
             onTouchEnd={() => setTopCut(sliderTopCut)} 
-            style={{ cursor: 'pointer', width: '75px' }} 
+            style={{ cursor: 'pointer', width: '65px' }} 
           />
         </div>
 
         {/* Dynamic Bottom Cut Slider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Btm Cut: {sliderBottomCut.toFixed(1)}m</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: themeColors.card, padding: '4px 8px', borderRadius: '5px', borderBottom: '2px solid #ff4081' }}>
+          <label style={{ fontSize: '11px', fontWeight: 'bold' }}>Btm Cut: {sliderBottomCut.toFixed(1)}m</label>
           <input 
-            type="range" 
-            min={bounds.minElev} max={bounds.maxElev} step={elevStep} 
-            value={sliderBottomCut} 
-            disabled={points.length === 0}
-            onChange={(e) => {
-              const val = Math.min(parseFloat(e.target.value), sliderTopCut);
-              setSliderBottomCut(val);
-            }} 
+            type="range" min={bounds.minElev} max={bounds.maxElev} step={elevStep} value={sliderBottomCut} disabled={points.length === 0}
+            onChange={(e) => setSliderBottomCut(Math.min(parseFloat(e.target.value), sliderTopCut))} 
             onMouseUp={() => setBottomCut(sliderBottomCut)} 
             onTouchEnd={() => setBottomCut(sliderBottomCut)} 
-            style={{ cursor: 'pointer', width: '75px' }} 
+            style={{ cursor: 'pointer', width: '65px' }} 
           />
         </div>
 
-        {/* Reset Cuts Button */}
+        {/* Toggle 3D Laser Planes & Reset Cuts */}
         {points.length > 0 && (
-          <button 
-            onClick={() => {
-              setSliceX(bounds.maxX); setSliderUIValueX(bounds.maxX);
-              setTopCut(bounds.maxElev); setSliderTopCut(bounds.maxElev);
-              setBottomCut(bounds.minElev); setSliderBottomCut(bounds.minElev);
-            }}
-            style={{ padding: '7px 10px', cursor: 'pointer', backgroundColor: '#607d8b', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}
-          >
-            Reset Cuts 🔄
-          </button>
+          <>
+            <button 
+              onClick={() => setShowPlanes(!showPlanes)}
+              style={{ padding: '6px 9px', cursor: 'pointer', backgroundColor: showPlanes ? '#009688' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '11px' }}
+              title="Toggle 3D Slicing Planes"
+            >
+              Planes 🟦
+            </button>
+            <button 
+              onClick={() => {
+                setSliceX(bounds.maxX); setSliderUIValueX(bounds.maxX);
+                setTopCut(bounds.maxElev); setSliderTopCut(bounds.maxElev);
+                setBottomCut(bounds.minElev); setSliderBottomCut(bounds.minElev);
+              }}
+              style={{ padding: '6px 9px', cursor: 'pointer', backgroundColor: '#607d8b', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '11px' }}
+            >
+              Reset 🔄
+            </button>
+          </>
         )}
+
+        {/* Material Selector & Volume Button */}
+        <select 
+          value={materialType} 
+          onChange={(e) => setMaterialType(e.target.value)}
+          style={{ padding: '6px', borderRadius: '4px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+        >
+          <option value="coal">⚫ Coal (1.4 t/m³)</option>
+          <option value="overburden">🟤 OB (2.4 t/m³)</option>
+          <option value="iron_ore">🔴 Iron Ore (3.8 t/m³)</option>
+        </select>
 
         <button 
           onClick={handleCalculateVolume} 
           disabled={points.length === 0 || isProcessing}
-          style={{ padding: '7px 12px', cursor: (points.length === 0 || isProcessing) ? 'not-allowed' : 'pointer', backgroundColor: (points.length === 0 || isProcessing) ? '#888' : '#2196f3', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px' }}
+          style={{ padding: '6px 11px', cursor: (points.length === 0 || isProcessing) ? 'not-allowed' : 'pointer', backgroundColor: (points.length === 0 || isProcessing) ? '#888' : '#2196f3', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}
         >
           Calc Volume 📦
         </button>
 
-        <button onClick={() => { setMeasureMode(!measureMode); setClickedPoints([]); setDistance(null); setSlopeAngle(null); }} style={{ padding: '7px 12px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px' }}>
+        <button onClick={() => { setMeasureMode(!measureMode); setClickedPoints([]); setDistance(null); setSlopeAngle(null); }} style={{ padding: '6px 11px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }}>
           {measureMode ? 'Close Measure' : 'Measure 📏'}
         </button>
 
-        {/* METRICS DISPLAY BAR */}
-        <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto', alignItems: 'center' }}>
+        {/* Export Report & 3D Screenshot Buttons */}
+        {points.length > 0 && (
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button onClick={handleExportReport} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: '#673ab7', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }} title="Download Engineering Report">
+              Report 📄
+            </button>
+            <button onClick={handleScreenshot} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: '#00897b', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '12px' }} title="Capture 3D Screenshot">
+              Snap 📸
+            </button>
+          </div>
+        )}
+
+        {/* METRICS & ANALYTICS BAR */}
+        <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto', alignItems: 'center', flexWrap: 'wrap' }}>
           {points.length > 0 && (
-            <div style={{ backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px', fontSize: '12px', fontWeight: 'bold' }}>
+            <div style={{ backgroundColor: themeColors.card, padding: '4px 9px', borderRadius: '5px', fontSize: '12px', fontWeight: 'bold' }}>
               Depth: {(bounds.maxElev - bounds.minElev).toFixed(1)}m
             </div>
           )}
 
           {calculatedVolume !== null && (
-            <div style={{ backgroundColor: '#00bcd4', padding: '5px 12px', borderRadius: '5px', fontWeight: 'bold', fontSize: '13px', color: 'black' }}>
-              Vol: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 2})} m³
+            <div style={{ backgroundColor: '#00bcd4', padding: '4px 10px', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px', color: 'black', display: 'flex', gap: '8px' }}>
+              <span>Vol: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 0})} m³</span>
+              <span style={{ borderLeft: '2px solid rgba(0,0,0,0.25)', paddingLeft: '8px' }}>
+                Mass: {(estimatedTonnes / 100000).toFixed(2)} Lakh T
+              </span>
+              <span style={{ borderLeft: '2px solid rgba(0,0,0,0.25)', paddingLeft: '8px' }}>
+                🚛 {estimatedDumpers.toLocaleString()} Trips (100T)
+              </span>
             </div>
           )}
 
           {distance !== null && slopeAngle !== null && (
-            <div style={{ backgroundColor: '#ff9800', padding: '5px 12px', borderRadius: '5px', fontWeight: 'bold', fontSize: '13px', color: 'black', display: 'flex', gap: '8px' }}>
-              <span>Dist: {distance.toFixed(2)}m</span>
-              <span style={{ borderLeft: '2px solid rgba(0,0,0,0.3)', paddingLeft: '8px' }}>Slope: {slopeAngle.toFixed(1)}°</span>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <div style={{ backgroundColor: '#ff9800', padding: '4px 10px', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px', color: 'black', display: 'flex', gap: '8px' }}>
+                <span>Dist: {distance.toFixed(1)}m</span>
+                <span style={{ borderLeft: '2px solid rgba(0,0,0,0.3)', paddingLeft: '8px' }}>Slope: {slopeAngle.toFixed(1)}°</span>
+              </div>
+              {safetyBadge && (
+                <div style={{ backgroundColor: safetyBadge.bg, color: safetyBadge.color, padding: '4px 9px', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }}>
+                  {safetyBadge.label}
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* 3D Scene Viewer */}
+      {/* 3D Scene Viewer (preserveDrawingBuffer enabled for screenshot capture) */}
       <div style={{ flex: 1 }}>
-        <Canvas camera={{ position: [0, 5, 12] }}>
+        <Canvas gl={{ preserveDrawingBuffer: true }} camera={{ position: [0, 5, 12] }}>
           <ambientLight intensity={activeTheme === 'dark' ? 0.8 : 1.2} />
           <gridHelper key={activeTheme} args={[50, 50, themeColors.gridMain, themeColors.gridSub]} />
           
           <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} sliceX={sliceX} topCut={topCut} bottomCut={bottomCut} />
           
+          {/* Render 3D Laser Cut Planes when file is loaded */}
+          {points.length > 0 && (
+            <SlicingPlanes bounds={bounds} topCut={topCut} bottomCut={bottomCut} showPlanes={showPlanes} />
+          )}
+
           {clickedPoints.map((pos, idx) => (
             <Sphere key={idx} args={[0.5, 16, 16]} position={pos}>
               <meshBasicMaterial color={activeTheme === 'dark' ? "white" : "black"} />
