@@ -1,9 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Line, Sphere } from '@react-three/drei';
 import Papa from 'papaparse';
 import * as THREE from 'three';
-// NEW IMPORTS: For LiDAR (.las) support
 import { parse } from '@loaders.gl/core';
 import { LASLoader } from '@loaders.gl/las';
 
@@ -65,7 +64,7 @@ function PointCloud({ data, pointSize, onPointClick, sliceX }) {
   );
 }
 
-// COMPONENT 2: Main Application UI with LiDAR and CSV Support
+// COMPONENT 2: Main Application UI
 function App() {
   const [points, setPoints] = useState([]);
   const [autoRotate, setAutoRotate] = useState(false);
@@ -81,7 +80,27 @@ function App() {
   
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // UPDATED FEATURE: Handle both CSV and LiDAR (.las) files dynamically
+  // NEW FEATURE: Theme State Management
+  const [themeMode, setThemeMode] = useState('dark'); // 'dark', 'light', 'system'
+  const [isSystemDark, setIsSystemDark] = useState(
+    window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+
+  // Listen for system theme changes dynamically
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e) => setIsSystemDark(e.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // Determine actual active theme colors
+  const activeTheme = themeMode === 'system' ? (isSystemDark ? 'dark' : 'light') : themeMode;
+  
+  const themeColors = activeTheme === 'dark' 
+    ? { bg: '#1e1e1e', nav: '#2d2d2d', text: 'white', card: '#333', gridMain: '#444', gridSub: '#222' }
+    : { bg: '#f0f2f5', nav: '#ffffff', text: '#333333', card: '#e4e6eb', gridMain: '#cccccc', gridSub: '#dddddd' };
+
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -89,7 +108,6 @@ function App() {
     setIsProcessing(true);
     const fileExtension = file.name.split('.').pop().toLowerCase();
 
-    // Check if the uploaded file is a CSV
     if (fileExtension === 'csv') {
       Papa.parse(file, {
         header: true,
@@ -97,35 +115,22 @@ function App() {
         skipEmptyLines: true,
         worker: true,
         complete: (results) => {
-          console.log("CSV Parsed Successfully. Total points:", results.data.length);
           setPoints(results.data);
           setIsProcessing(false);
         }
       });
-    } 
-    // Check if the uploaded file is a LiDAR (.las) file
-    else if (fileExtension === 'las') {
+    } else if (fileExtension === 'las') {
       try {
         const arrayBuffer = await file.arrayBuffer();
         const lasData = await parse(arrayBuffer, LASLoader);
-        
         const positions = lasData.attributes.POSITION.value;
         const formattedPoints = [];
-        
-        // Convert flat ArrayBuffer to structured object array to maintain compatibility
         for (let i = 0; i < positions.length; i += 3) {
-          formattedPoints.push({
-            X: positions[i],
-            Y: positions[i + 1],
-            Z: positions[i + 2]
-          });
+          formattedPoints.push({ X: positions[i], Y: positions[i + 1], Z: positions[i + 2] });
         }
-        
-        console.log("LiDAR (.las) Parsed Successfully. Total points:", formattedPoints.length);
         setPoints(formattedPoints);
       } catch (error) {
-        console.error("Error parsing LiDAR file:", error);
-        alert("Failed to parse the .las file. Ensure it is a valid LiDAR dataset.");
+        alert("Failed to parse the .las file.");
       } finally {
         setIsProcessing(false);
       }
@@ -138,7 +143,6 @@ function App() {
   const handlePointClick = (event) => {
     if (!measureMode) return;
     event.stopPropagation();
-    
     const newPoint = event.point;
 
     if (clickedPoints.length === 0 || clickedPoints.length === 2) {
@@ -148,13 +152,11 @@ function App() {
     } else if (clickedPoints.length === 1) {
       const p1 = clickedPoints[0];
       const p2 = newPoint;
-      
       const dist = p1.distanceTo(p2);
       
       const verticalDiff = Math.abs(p1.y - p2.y);
       const horizontalDist = Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.z - p2.z, 2));
-      const angleInRadians = Math.atan2(verticalDiff, horizontalDist);
-      const angleInDegrees = angleInRadians * (180 / Math.PI);
+      const angleInDegrees = Math.atan2(verticalDiff, horizontalDist) * (180 / Math.PI);
       
       setClickedPoints([p1, p2]);
       setDistance(dist);
@@ -163,17 +165,28 @@ function App() {
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
+    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: themeColors.bg, transition: 'background-color 0.3s' }}>
       
-      <div style={{ padding: '15px', backgroundColor: '#2d2d2d', color: 'white', borderBottom: '2px solid #444', display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+      {/* Top Navigation Panel */}
+      <div style={{ padding: '15px', backgroundColor: themeColors.nav, color: themeColors.text, borderBottom: `2px solid ${themeColors.card}`, display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', transition: 'all 0.3s' }}>
         <h2 style={{ margin: '0' }}>3D Mine Survey Visualizer</h2>
         
-        {/* UPDATED: accept attribute now allows both .csv and .las formats */}
-        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: 'white' }} />
+        {/* NEW UI: Theme Selector */}
+        <select 
+          value={themeMode} 
+          onChange={(e) => setThemeMode(e.target.value)}
+          style={{ padding: '8px', borderRadius: '4px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+        >
+          <option value="dark">🌙 Dark</option>
+          <option value="light">☀️ Light</option>
+          <option value="system">💻 System</option>
+        </select>
+
+        <input type="file" accept=".csv, .las" onChange={handleFileUpload} style={{ color: themeColors.text }} />
         
         {isProcessing && (
-          <div style={{ color: '#ffeb3b', fontWeight: 'bold' }}>
-            Processing Massive Data... ⏳
+          <div style={{ color: '#ffeb3b', fontWeight: 'bold', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
+            Processing Data... ⏳
           </div>
         )}
         
@@ -184,24 +197,13 @@ function App() {
           {autoRotate ? 'Stop Rotation' : 'Auto-Rotate'}
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
-          <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Slice Mode ✂️</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: themeColors.card, padding: '5px 10px', borderRadius: '5px' }}>
+          <label style={{ fontSize: '14px', fontWeight: 'bold' }}>Slice ✂️</label>
           <input 
-            type="range" min="-50" max="50" step="1" 
-            value={sliderUIValue} 
+            type="range" min="-50" max="50" step="1" value={sliderUIValue} 
             onChange={(e) => setSliderUIValue(parseFloat(e.target.value))} 
             onMouseUp={(e) => setSliceX(parseFloat(e.target.value))} 
             onTouchEnd={(e) => setSliceX(parseFloat(e.target.value))} 
-            style={{ cursor: 'pointer' }}
-          />
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#333', padding: '5px 10px', borderRadius: '5px' }}>
-          <label style={{ color: 'white', fontSize: '14px', fontWeight: 'bold' }}>Point Size: {pointSize.toFixed(1)}</label>
-          <input 
-            type="range" min="0.1" max="2.0" step="0.1" 
-            value={pointSize} 
-            onChange={(e) => setPointSize(parseFloat(e.target.value))} 
             style={{ cursor: 'pointer' }}
           />
         </div>
@@ -215,7 +217,7 @@ function App() {
           }}
           style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}
         >
-          {measureMode ? 'Close Measurement' : 'Measure & Slope 📏'}
+          {measureMode ? 'Close Measure' : 'Measure & Slope 📏'}
         </button>
 
         {distance !== null && slopeAngle !== null && (
@@ -224,29 +226,25 @@ function App() {
             <span style={{ borderLeft: '2px solid rgba(0,0,0,0.3)', paddingLeft: '15px' }}>Slope: {slopeAngle.toFixed(1)}°</span>
           </div>
         )}
-
-        {!isProcessing && points.length > 0 && (
-          <div style={{ backgroundColor: '#4caf50', padding: '5px 15px', borderRadius: '5px', fontWeight: 'bold', fontSize: '14px', marginLeft: 'auto' }}>
-            Total Points: {points.length.toLocaleString()}
-          </div>
-        )}
       </div>
 
+      {/* 3D Scene Viewer */}
       <div style={{ flex: 1 }}>
         <Canvas camera={{ position: [0, 5, 12] }}>
-          <ambientLight intensity={0.8} />
-          <gridHelper args={[50, 50, '#444', '#222']} />
+          <ambientLight intensity={activeTheme === 'dark' ? 0.8 : 1.2} />
+          {/* Grid color changes dynamically based on theme */}
+          <gridHelper key={activeTheme} args={[50, 50, themeColors.gridMain, themeColors.gridSub]} />
           
           <PointCloud data={points} pointSize={pointSize} onPointClick={handlePointClick} sliceX={sliceX} />
           
           {clickedPoints.map((pos, idx) => (
             <Sphere key={idx} args={[0.5, 16, 16]} position={pos}>
-              <meshBasicMaterial color="red" />
+              <meshBasicMaterial color={activeTheme === 'dark' ? "white" : "black"} />
             </Sphere>
           ))}
 
           {clickedPoints.length === 2 && (
-            <Line points={[clickedPoints[0], clickedPoints[1]]} color="white" lineWidth={3} />
+            <Line points={[clickedPoints[0], clickedPoints[1]]} color={activeTheme === 'dark' ? "white" : "black"} lineWidth={3} />
           )}
 
           <OrbitControls autoRotate={autoRotate} />
