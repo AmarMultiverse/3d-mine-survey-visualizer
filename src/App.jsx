@@ -669,15 +669,15 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
               </>
             )}
 
-            {/* Material Preset Selector */}
+            {/* Material Preset Selector (Fixed Labels) */}
             <select 
               value={materialType} 
               onChange={(e) => handleMaterialChange(e.target.value)}
               style={{ padding: '6px', borderRadius: '5px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
             >
-              <option value="coal">⚫ Coal ({customDensity} t/m³)</option>
-              <option value="overburden">🟤 OB ({customDensity} t/m³)</option>
-              <option value="iron_ore">🔴 Iron Ore ({customDensity} t/m³)</option>
+              <option value="coal">⚫ Coal (1.4 t/m³)</option>
+              <option value="overburden">🟤 OB (2.4 t/m³)</option>
+              <option value="iron_ore">🔴 Iron Ore (3.8 t/m³)</option>
               <option value="custom">⚙️ Custom ({customDensity} t/m³)</option>
             </select>
 
@@ -752,7 +752,12 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
       <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
         <Canvas style={{ width: '100%', height: '100%' }} gl={{ preserveDrawingBuffer: true }} camera={{ position: [0, 80, 180], far: 100000 }}>
           <ambientLight intensity={activeTheme === 'dark' ? 0.8 : 1.2} />
-          <gridHelper key={activeTheme} args={[Math.max(100, bounds.span * 1.2), 40, themeColors.gridMain, themeColors.gridSub]} />
+          {/* Grid Positioned at the Base/Floor of the Mine Pit */}
+          <gridHelper 
+            key={activeTheme} 
+            args={[Math.max(100, bounds.span * 1.2), 40, themeColors.gridMain, themeColors.gridSub]} 
+            position={[0, bounds.minElev - bounds.offsetZ, 0]} 
+          />
           
           <PointCloud 
             data={points} 
