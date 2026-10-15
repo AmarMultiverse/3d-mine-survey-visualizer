@@ -6,18 +6,19 @@ import * as THREE from 'three';
 import { parse } from '@loaders.gl/core';
 import { LASLoader } from '@loaders.gl/las';
 
-// Material Specific Gravity Constants (Tonnes per Cubic Meter)
-const MATERIALS = {
-  coal: { name: 'Coal (1.4 t/m³)', density: 1.4 },
-  overburden: { name: 'Overburden (2.4 t/m³)', density: 2.4 },
-  iron_ore: { name: 'Iron Ore (3.8 t/m³)', density: 3.8 }
+// Default Material Presets (Density in t/m³, Default Price/Cost in ₹ per Tonne)
+const MATERIAL_PRESETS = {
+  coal: { name: 'Coal', density: 1.4, pricePerTon: 2500, label: 'Revenue' },
+  overburden: { name: 'Overburden (OB)', density: 2.4, pricePerTon: 180, label: 'Removal Cost' },
+  iron_ore: { name: 'Iron Ore', density: 3.8, pricePerTon: 4500, label: 'Revenue' },
+  custom: { name: 'Custom Material', density: 2.0, pricePerTon: 1000, label: 'Valuation' }
 };
 
 // Maximum rendered points cap to guarantee 60 FPS on massive raw LiDAR scans
 const MAX_RENDER_POINTS = 1000000;
 
 // COMPONENT 1: Real-World Normalized Point Cloud Renderer
-function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut, colorMode }) {
+function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut, colorMode, benchHeight }) {
   const geometry = useMemo(() => {
     if (!data || data.length === 0) return null;
 
@@ -41,6 +42,8 @@ function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut, 
     const color = new THREE.Color();
 
     const heightRange = maxY - minY === 0 ? 1 : maxY - minY;
+    const validBenchHeight = Math.max(1, parseFloat(benchHeight) || 10);
+    const contourThickness = Math.max(0.15, validBenchHeight * 0.04);
 
     for (let i = 0; i < filteredData.length; i++) {
       const point = filteredData[i];
@@ -52,16 +55,14 @@ function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut, 
       const normalizedHeight = (point.rawZ - minY) / heightRange;
 
       if (colorMode === 'strata') {
-        // 10m Bench Strata / Contour Banding Mode
-        const benchInterval = 10; 
-        const benchIndex = Math.floor(Math.abs(point.rawZ) / benchInterval);
-        const isContourEdge = Math.abs(point.rawZ % benchInterval) < 0.45;
+        // Dynamic Bench Strata / Contour Banding Mode (User-customizable height: 10m, 11m, 12m, etc.)
+        const relElev = Math.abs(point.rawZ - minY);
+        const benchIndex = Math.floor(relElev / validBenchHeight);
+        const isContourEdge = (relElev % validBenchHeight) < contourThickness;
 
         if (isContourEdge) {
-          // Dark contour line every 10 meters for clear bench demarcation
           color.setRGB(0.08, 0.08, 0.08);
         } else {
-          // Distinct alternating geological strata palette
           const strataHues = [0.05, 0.12, 0.28, 0.48, 0.58, 0.78];
           const hue = strataHues[benchIndex % strataHues.length];
           const lightness = benchIndex % 2 === 0 ? 0.52 : 0.38;
@@ -82,7 +83,7 @@ function PointCloud({ data, pointSize, onPointClick, sliceX, topCut, bottomCut, 
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     return geo;
-  }, [data, sliceX, topCut, bottomCut, colorMode]);
+  }, [data, sliceX, topCut, bottomCut, colorMode, benchHeight]);
 
   if (!geometry) return null;
 
@@ -100,7 +101,6 @@ function SlicingPlanes({ bounds, topCut, bottomCut, showPlanes }) {
   const width = Math.max(50, (bounds.maxX - bounds.minX) * 1.15);
   const length = Math.max(50, (bounds.maxY - bounds.minY) * 1.15);
 
-  // Convert real-world cut elevations into centered 3D scene coordinates
   const localTopY = topCut - bounds.offsetZ;
   const localBottomY = bottomCut - bounds.offsetZ;
 
@@ -131,11 +131,16 @@ function App() {
   const [showPlanes, setShowPlanes] = useState(true);
   const [colorMode, setColorMode] = useState('elevation'); // 'elevation' | 'strata'
   
-  // Responsive UI Collapse State
+  // Responsive UI Drawers
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
+  const [showCustomParams, setShowCustomParams] = useState(false);
 
-  // Material Selection State for Tonnage & Fleet
+  // Customizable Engineering & Economic Parameters (With Defaults)
+  const [benchHeight, setBenchHeight] = useState(10); // Default 10m bench
   const [materialType, setMaterialType] = useState('coal');
+  const [customDensity, setCustomDensity] = useState(1.4); // Default Coal 1.4 t/m³
+  const [dumperCapacity, setDumperCapacity] = useState(100); // Default 100T Dumper
+  const [unitPrice, setUnitPrice] = useState(2500); // Default ₹2500/Tonne
 
   // Measurement & Slope States
   const [measureMode, setMeasureMode] = useState(false);
@@ -143,7 +148,6 @@ function App() {
   const [distance, setDistance] = useState(null);
   const [slopeAngle, setSlopeAngle] = useState(null);
 
-  // OrbitControls Reference for 1-Click Camera Presets
   const controlsRef = useRef();
 
   // Dynamic Boundary & UTM Offset States
@@ -181,6 +185,15 @@ function App() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
+  // Update default density & price when material preset changes
+  const handleMaterialChange = (type) => {
+    setMaterialType(type);
+    if (MATERIAL_PRESETS[type]) {
+      setCustomDensity(MATERIAL_PRESETS[type].density);
+      setUnitPrice(MATERIAL_PRESETS[type].pricePerTon);
+    }
+  };
+
   const activeTheme = themeMode === 'system' ? (isSystemDark ? 'dark' : 'light') : themeMode;
   const themeColors = activeTheme === 'dark' 
     ? { 
@@ -199,10 +212,8 @@ function App() {
     const totalRawPoints = isFlatArray ? Math.floor(rawDataset.length / 3) : rawDataset.length;
     setRawPointCount(totalRawPoints);
 
-    // Smart Decimation Step if file exceeds 1 Million points
     const stride = totalRawPoints > MAX_RENDER_POINTS ? Math.ceil(totalRawPoints / MAX_RENDER_POINTS) : 1;
 
-    // Auto-detect CSV column names (Supports X/Y/Z, Easting/Northing/RL, Lon/Lat/Alt)
     let keyX = 'X', keyY = 'Y', keyZ = 'Z';
     if (!isFlatArray && rawDataset[0]) {
       const keys = Object.keys(rawDataset[0]);
@@ -246,11 +257,10 @@ function App() {
     }
 
     if (extracted.length === 0) {
-      alert("No valid numeric 3D coordinates found! Check your CSV headers.");
+      alert("No valid numeric 3D coordinates found! Check your file headers.");
       return;
     }
 
-    // Calculate Geometric Center (UTM Offset) to center model at (0,0,0)
     const offsetX = (minX + maxX) / 2;
     const offsetY = (minY + maxY) / 2;
     const offsetZ = (minElev + maxElev) / 2;
@@ -258,8 +268,8 @@ function App() {
     for (let i = 0; i < extracted.length; i++) {
       const p = extracted[i];
       p.cx = p.rawX - offsetX;
-      p.cy = p.rawZ - offsetZ; // Z (Elevation) maps to Three.js vertical Y-axis
-      p.cz = p.rawY - offsetY; // Y (Northing) maps to Three.js horizontal Z-axis
+      p.cy = p.rawZ - offsetZ;
+      p.cz = p.rawY - offsetY;
     }
 
     const cleanMinX = Math.floor(minX * 10) / 10;
@@ -283,7 +293,6 @@ function App() {
     setBottomCut(cleanMinElev); setSliderBottomCut(cleanMinElev);
     setPoints(extracted);
 
-    // Auto-fit camera distance to the size of the newly loaded mine
     setTimeout(() => {
       if (controlsRef.current) {
         controlsRef.current.target.set(0, 0, 0);
@@ -293,7 +302,7 @@ function App() {
     }, 80);
   };
 
-  // Camera View Preset Handler (Top / Front / Isometric)
+  // Camera View Preset Handler
   const handleCameraPreset = (view) => {
     if (!controlsRef.current) return;
     const dist = bounds.span * 0.95;
@@ -347,7 +356,7 @@ function App() {
     }
   };
 
-  // BOUNDED FLITCH VOLUME CALCULATION (Using True Survey Coordinates)
+  // 🚀 BOUNDED FLITCH VOLUME CALCULATION (Respects SliceX, TopCut, and BottomCut!)
   const handleCalculateVolume = () => {
     if (points.length === 0) return;
     setIsProcessing(true);
@@ -379,6 +388,9 @@ function App() {
         const x = points[i].rawX;
         const y = points[i].rawY;
         const z = points[i].rawZ;
+
+        // Respect X-axis cross-section slice during volume calculation
+        if (x > sliceX) continue;
 
         let col = Math.floor((x - minX) / cellWidth);
         let row = Math.floor((y - minY) / cellLength);
@@ -444,16 +456,24 @@ function App() {
     return { label: 'CRITICAL (>65° DGMS Alert) 🚨', bg: '#f44336', color: 'white' };
   };
 
-  // Export Engineering Survey Report (.txt)
+  // Dynamic Engineering & Financial Calculations
+  const validDensity = Math.max(0.1, parseFloat(customDensity) || 1.4);
+  const validDumperCap = Math.max(1, parseFloat(dumperCapacity) || 100);
+  const validUnitPrice = Math.max(0, parseFloat(unitPrice) || 0);
+  const validBenchHeight = Math.max(1, parseFloat(benchHeight) || 10);
+
+  const estimatedTonnes = calculatedVolume !== null ? calculatedVolume * validDensity : null;
+  const estimatedDumpers = estimatedTonnes !== null ? Math.ceil(estimatedTonnes / validDumperCap) : null;
+  const estimatedValueCrores = estimatedTonnes !== null ? (estimatedTonnes * validUnitPrice) / 10000000 : null;
+  const economicLabel = MATERIAL_PRESETS[materialType]?.label || 'Valuation';
+
+  // Export Engineering & Financial Survey Report (.txt)
   const handleExportReport = () => {
     if (points.length === 0) return;
-    const density = MATERIALS[materialType].density;
-    const tonnage = calculatedVolume ? calculatedVolume * density : 0;
-    const dumpers = calculatedVolume ? Math.ceil(tonnage / 100) : 0;
     const safety = getSlopeSafetyStatus(slopeAngle);
 
     const reportText = `====================================================
-      3D MINE SURVEY & EXCAVATION REPORT
+   3D MINE SURVEY, HAULAGE & ECONOMICS REPORT
 ====================================================
 Timestamp          : ${new Date().toLocaleString()}
 Dataset File       : ${fileName}
@@ -465,7 +485,7 @@ Easting (X) Span   : ${bounds.minX}m to ${bounds.maxX}m
 Northing (Y) Span  : ${bounds.minY}m to ${bounds.maxY}m
 Elevation (RL)     : ${bounds.minElev}m (Bottom) to ${bounds.maxElev}m (Top)
 Total Pit Depth    : ${(bounds.maxElev - bounds.minElev).toFixed(2)} m
-UTM Center Offset  : dX=${bounds.offsetX.toFixed(1)}m, dY=${bounds.offsetY.toFixed(1)}m, dZ=${bounds.offsetZ.toFixed(1)}m
+Bench Height Config: ${validBenchHeight} m
 
 --- ACTIVE SLICING PLANES (FLITCH BOUNDS) ---
 X-Cross Section    : <= ${sliceX.toFixed(2)} m
@@ -473,11 +493,14 @@ Top Cut Plane (RL) : ${topCut.toFixed(2)} m
 Bottom Cut (RL)    : ${bottomCut.toFixed(2)} m
 Active Slice Height: ${(topCut - bottomCut).toFixed(2)} m
 
---- VOLUMETRIC & HAULAGE ESTIMATION (100x100 DEM) ---
-Target Material    : ${MATERIALS[materialType].name}
+--- VOLUMETRIC, HAULAGE & ECONOMIC ESTIMATION ---
+Material Category  : ${MATERIAL_PRESETS[materialType].name}
+Specific Gravity   : ${validDensity} t/m³
 Excavated Volume   : ${calculatedVolume !== null ? calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 2}) + ' m³' : 'Not Calculated'}
-Estimated Mass     : ${calculatedVolume !== null ? tonnage.toLocaleString(undefined, {maximumFractionDigits: 2}) + ' Tonnes' : 'N/A'}
-Haulage (100T Cat) : ${calculatedVolume !== null ? dumpers.toLocaleString() + ' Trips' : 'N/A'}
+Estimated Tonnage  : ${estimatedTonnes !== null ? estimatedTonnes.toLocaleString(undefined, {maximumFractionDigits: 2}) + ' Tonnes' : 'N/A'}
+Dumper Fleet (${validDumperCap}T) : ${estimatedDumpers !== null ? estimatedDumpers.toLocaleString() + ' Trips' : 'N/A'}
+Unit Rate          : INR ${validUnitPrice.toLocaleString()} / Tonne
+Est. ${economicLabel.padEnd(14)}: ${estimatedValueCrores !== null ? 'INR ' + estimatedValueCrores.toFixed(2) + ' Crores' : 'N/A'}
 
 --- GEOTECHNICAL SLOPE ANALYSIS ---
 Measured 3D Dist.  : ${distance !== null ? distance.toFixed(2) + ' m' : 'Not Measured'}
@@ -488,7 +511,7 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
     const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `Mine_Survey_Report_${Date.now()}.txt`;
+    link.download = `Mine_Survey_Economics_Report_${Date.now()}.txt`;
     link.click();
   };
 
@@ -504,9 +527,6 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
 
   const elevStep = Math.max(0.1, parseFloat(((bounds.maxElev - bounds.minElev) / 200).toFixed(2)));
   const xStep = Math.max(0.1, parseFloat(((bounds.maxX - bounds.minX) / 200).toFixed(2)));
-  const currentDensity = MATERIALS[materialType].density;
-  const estimatedTonnes = calculatedVolume !== null ? calculatedVolume * currentDensity : null;
-  const estimatedDumpers = estimatedTonnes !== null ? Math.ceil(estimatedTonnes / 100) : null;
   const safetyBadge = getSlopeSafetyStatus(slopeAngle);
   const isUTMData = Math.abs(bounds.offsetX) > 1000 || Math.abs(bounds.offsetY) > 1000;
 
@@ -529,10 +549,10 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
 
             <input type="file" accept=".csv, .las, .laz" onChange={handleFileUpload} style={{ color: themeColors.text, maxWidth: '180px', fontSize: '12px' }} />
 
-            {/* Color Mode Selector (Heatmap vs 10m Bench Strata) */}
+            {/* Color Mode Selector */}
             <select value={colorMode} onChange={(e) => setColorMode(e.target.value)} style={{ padding: '5px 8px', borderRadius: '5px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
               <option value="elevation">🌈 Elevation Heatmap</option>
-              <option value="strata">🪨 10m Bench Strata</option>
+              <option value="strata">🪨 {validBenchHeight}m Bench Strata</option>
             </select>
 
             {isProcessing && (
@@ -546,13 +566,13 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
             {points.length > 0 && (
               <>
-                <button onClick={() => handleCameraPreset('iso')} style={{ padding: '5px 8px', cursor: 'pointer', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }} title="Isometric 3D View">
+                <button onClick={() => handleCameraPreset('iso')} style={{ padding: '5px 8px', cursor: 'pointer', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }}>
                   Iso 📐
                 </button>
-                <button onClick={() => handleCameraPreset('top')} style={{ padding: '5px 8px', cursor: 'pointer', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }} title="Top Plan View">
+                <button onClick={() => handleCameraPreset('top')} style={{ padding: '5px 8px', cursor: 'pointer', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }}>
                   Top ⬆️
                 </button>
-                <button onClick={() => handleCameraPreset('front')} style={{ padding: '5px 8px', cursor: 'pointer', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }} title="Front Cross-Section View">
+                <button onClick={() => handleCameraPreset('front')} style={{ padding: '5px 8px', cursor: 'pointer', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '11px' }}>
                   Front ➡️
                 </button>
                 <button onClick={handleExportReport} style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: '#673ab7', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }}>
@@ -587,7 +607,7 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
               <input 
                 type="range" min="0.1" max="2.0" step="0.1" value={pointSize}
                 onChange={(e) => setPointSize(parseFloat(e.target.value))}
-                style={{ cursor: 'pointer', width: '55px' }}
+                style={{ cursor: 'pointer', width: '50px' }}
               />
             </div>
 
@@ -599,7 +619,7 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
                 onChange={(e) => setSliderUIValueX(parseFloat(e.target.value))} 
                 onMouseUp={(e) => setSliceX(parseFloat(e.target.value))} 
                 onTouchEnd={(e) => setSliceX(parseFloat(e.target.value))} 
-                style={{ cursor: 'pointer', width: '60px' }} 
+                style={{ cursor: 'pointer', width: '55px' }} 
               />
             </div>
 
@@ -611,7 +631,7 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
                 onChange={(e) => setSliderTopCut(Math.max(parseFloat(e.target.value), sliderBottomCut))} 
                 onMouseUp={() => setTopCut(sliderTopCut)} 
                 onTouchEnd={() => setTopCut(sliderTopCut)} 
-                style={{ cursor: 'pointer', width: '65px' }} 
+                style={{ cursor: 'pointer', width: '60px' }} 
               />
             </div>
 
@@ -623,7 +643,7 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
                 onChange={(e) => setSliderBottomCut(Math.min(parseFloat(e.target.value), sliderTopCut))} 
                 onMouseUp={() => setBottomCut(sliderBottomCut)} 
                 onTouchEnd={() => setBottomCut(sliderBottomCut)} 
-                style={{ cursor: 'pointer', width: '65px' }} 
+                style={{ cursor: 'pointer', width: '60px' }} 
               />
             </div>
 
@@ -649,16 +669,26 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
               </>
             )}
 
-            {/* Material Selector & Volume Button */}
+            {/* Material Preset Selector */}
             <select 
               value={materialType} 
-              onChange={(e) => setMaterialType(e.target.value)}
+              onChange={(e) => handleMaterialChange(e.target.value)}
               style={{ padding: '6px', borderRadius: '5px', backgroundColor: themeColors.card, color: themeColors.text, border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
             >
-              <option value="coal">⚫ Coal (1.4 t/m³)</option>
-              <option value="overburden">🟤 OB (2.4 t/m³)</option>
-              <option value="iron_ore">🔴 Iron Ore (3.8 t/m³)</option>
+              <option value="coal">⚫ Coal ({customDensity} t/m³)</option>
+              <option value="overburden">🟤 OB ({customDensity} t/m³)</option>
+              <option value="iron_ore">🔴 Iron Ore ({customDensity} t/m³)</option>
+              <option value="custom">⚙️ Custom ({customDensity} t/m³)</option>
             </select>
+
+            {/* Toggle Custom Engineering & Economic Parameters Drawer */}
+            <button 
+              onClick={() => setShowCustomParams(!showCustomParams)}
+              style={{ padding: '6px 10px', cursor: 'pointer', backgroundColor: showCustomParams ? '#ff9800' : themeColors.card, color: showCustomParams ? 'black' : themeColors.text, border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }}
+              title="Customize Bench Height, Density, Dumper Size & Pricing"
+            >
+              ⚙️ Params
+            </button>
 
             <button 
               onClick={handleCalculateVolume} 
@@ -671,6 +701,49 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
             <button onClick={() => { setMeasureMode(!measureMode); setClickedPoints([]); setDistance(null); setSlopeAngle(null); }} style={{ padding: '6px 11px', cursor: 'pointer', backgroundColor: measureMode ? '#e91e63' : '#555', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '12px' }}>
               {measureMode ? 'Close Measure' : 'Measure 📏'}
             </button>
+          </div>
+        )}
+
+        {/* ⚙️ CUSTOM ENGINEERING & ECONOMIC PARAMETERS BAR (Expandable) */}
+        {isToolbarOpen && showCustomParams && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginTop: '8px', padding: '8px 12px', backgroundColor: themeColors.card, borderRadius: '6px', fontSize: '12px' }}>
+            <span style={{ fontWeight: 800, color: '#00e5ff' }}>⚙️ Custom Mine Parameters:</span>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 'bold' }}>
+              🪨 Bench Height (m):
+              <input 
+                type="number" min="1" max="100" step="1" value={benchHeight}
+                onChange={(e) => setBenchHeight(e.target.value)}
+                style={{ width: '55px', padding: '3px 6px', borderRadius: '4px', border: '1px solid #666', backgroundColor: themeColors.nav, color: themeColors.text, fontWeight: 'bold' }}
+              />
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 'bold' }}>
+              ⚖️ Density (t/m³):
+              <input 
+                type="number" min="0.1" max="20" step="0.1" value={customDensity}
+                onChange={(e) => { setCustomDensity(e.target.value); setMaterialType('custom'); }}
+                style={{ width: '60px', padding: '3px 6px', borderRadius: '4px', border: '1px solid #666', backgroundColor: themeColors.nav, color: themeColors.text, fontWeight: 'bold' }}
+              />
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 'bold' }}>
+              🚛 Dumper Cap (T):
+              <input 
+                type="number" min="10" max="500" step="5" value={dumperCapacity}
+                onChange={(e) => setDumperCapacity(e.target.value)}
+                style={{ width: '60px', padding: '3px 6px', borderRadius: '4px', border: '1px solid #666', backgroundColor: themeColors.nav, color: themeColors.text, fontWeight: 'bold' }}
+              />
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 'bold' }}>
+              💰 Rate (₹/Tonne):
+              <input 
+                type="number" min="0" step="50" value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+                style={{ width: '75px', padding: '3px 6px', borderRadius: '4px', border: '1px solid #666', backgroundColor: themeColors.nav, color: themeColors.text, fontWeight: 'bold' }}
+              />
+            </label>
           </div>
         )}
       </div>
@@ -689,6 +762,7 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
             topCut={topCut} 
             bottomCut={bottomCut} 
             colorMode={colorMode}
+            benchHeight={benchHeight}
           />
           
           {points.length > 0 && (
@@ -732,7 +806,7 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.8px', opacity: 0.75 }}>
-              📊 Live Survey Telemetry
+              📊 Live Survey & Economic Telemetry
             </span>
             {isUTMData && (
               <span style={{ backgroundColor: '#673ab7', color: 'white', padding: '2px 7px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>
@@ -751,14 +825,21 @@ DGMS Safety Status : ${safety ? safety.label : 'N/A'}
             <span>🟢 Points: {points.length.toLocaleString()}</span>
             <span>↕️ Pit Depth: {(bounds.maxElev - bounds.minElev).toFixed(1)}m</span>
             <span>✂️ Slice Height: {(topCut - bottomCut).toFixed(1)}m</span>
+            <span>🪨 Bench: {validBenchHeight}m</span>
           </div>
 
-          {/* Volumetric & Fleet Metrics */}
+          {/* Volumetric, Fleet & Economic Valuation Metrics */}
           {calculatedVolume !== null && (
-            <div style={{ backgroundColor: '#00bcd4', color: 'black', padding: '6px 10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <span>📦 Vol: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 0})} m³</span>
-              <span>⚖️ Mass: {(estimatedTonnes / 100000).toFixed(2)} Lakh T</span>
-              <span>🚛 Fleet (100T): {estimatedDumpers.toLocaleString()} Trips</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ backgroundColor: '#00bcd4', color: 'black', padding: '6px 10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <span>📦 Vol: {calculatedVolume.toLocaleString(undefined, {maximumFractionDigits: 0})} m³</span>
+                <span>⚖️ Mass: {(estimatedTonnes / 100000).toFixed(2)} Lakh T</span>
+                <span>🚛 Fleet ({validDumperCap}T): {estimatedDumpers.toLocaleString()} Trips</span>
+              </div>
+              <div style={{ backgroundColor: '#10b981', color: 'black', padding: '5px 10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '12px', display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+                <span>💰 Est. {economicLabel} (@ ₹{validUnitPrice.toLocaleString()}/T):</span>
+                <span style={{ fontWeight: 900 }}>₹ {estimatedValueCrores.toFixed(2)} Crores</span>
+              </div>
             </div>
           )}
 
